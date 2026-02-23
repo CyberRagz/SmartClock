@@ -1,0 +1,167 @@
+# =============================================================================
+# SMART CLOCK — LOVELACE DASHBOARD CARD
+# =============================================================================
+# How to add this to your dashboard:
+#   1. Open your HA Dashboard → Edit Dashboard
+#   2. Click the "+" to add a card → choose "Manual card"
+#   3. Paste the YAML below (starting from "type: vertical-stack")
+# =============================================================================
+
+type: vertical-stack
+cards:
+
+  # ---------------------------------------------------------------------------
+  # SECTION 1 — Message Controls (Custom + Presets)
+  # ---------------------------------------------------------------------------
+  - type: entities
+    title: "Smart Clock — Message"
+    icon: mdi:clock-digital
+    show_header_toggle: false
+    entities:
+      - entity: input_text.smart_clock_message
+        name: "Custom Message"
+      - entity: input_number.smart_clock_display_duration
+        name: "Display Duration"
+      - entity: input_select.smart_clock_preset_messages
+        name: "Preset Messages"
+
+  # ---------------------------------------------------------------------------
+  # SECTION 2 — RTC Status & Telemetry
+  # ---------------------------------------------------------------------------
+  - type: entities
+    title: "RTC Status"
+    icon: mdi:chip
+    show_header_toggle: false
+    entities:
+      - entity: sensor.smart_clock_rtc_status
+        name: "RTC Status"
+        icon: mdi:clock-check
+      - entity: sensor.smart_clock_rtc_time
+        name: "Current Time"
+        icon: mdi:clock-digital
+      - entity: sensor.smart_clock_rtc_date
+        name: "Current Date"
+        icon: mdi:calendar
+      - entity: sensor.smart_clock_rtc_temperature
+        name: "RTC Temperature"
+        icon: mdi:thermometer
+      - type: button
+        name: "Sync RTC with NTP"
+        icon: mdi:sync
+        action_name: "Sync"
+        tap_action:
+          action: call-service
+          service: script.smart_clock_sync_rtc
+
+  # ---------------------------------------------------------------------------
+  # SECTION 3 — Message Action Buttons (2 columns)
+  # ---------------------------------------------------------------------------
+  - type: horizontal-stack
+    cards:
+      - type: vertical-stack
+        cards:
+          - type: button
+            name: "Show Custom Message"
+            icon: mdi:send
+            tap_action:
+              action: call-service
+              service: script.smart_clock_show_message
+            hold_action:
+              action: none
+          - type: button
+            name: "Show Preset"
+            icon: mdi:message-fast
+            tap_action:
+              action: call-service
+              service: script.smart_clock_show_preset
+            hold_action:
+              action: none
+
+      - type: vertical-stack
+        cards:
+          - type: button
+            name: "Indoor Temp"
+            icon: mdi:thermometer
+            tap_action:
+              action: call-service
+              service: script.smart_clock_show_indoor_temp
+            hold_action:
+              action: none
+          - type: button
+            name: "Outdoor Temp"
+            icon: mdi:thermometer
+            tap_action:
+              action: call-service
+              service: script.smart_clock_show_outdoor_temp
+            hold_action:
+              action: none
+
+  - type: horizontal-stack
+    cards:
+      - type: vertical-stack
+        cards:
+          - type: button
+            name: "Humidity"
+            icon: mdi:water-percent
+            tap_action:
+              action: call-service
+              service: script.smart_clock_show_humidity
+            hold_action:
+              action: none
+          - type: button
+            name: "Weather"
+            icon: mdi:weather-partly-cloudy
+            tap_action:
+              action: call-service
+              service: script.smart_clock_show_weather
+            hold_action:
+              action: none
+
+  # ---------------------------------------------------------------------------
+  # SECTION 4 — Clock Reset
+  # ---------------------------------------------------------------------------
+  - type: entities
+    title: "Clock Actions"
+    show_header_toggle: false
+    entities:
+      - type: button
+        name: "Return to Clock"
+        icon: mdi:clock
+        action_name: "Reset"
+        tap_action:
+          action: call-service
+          service: script.smart_clock_return_to_clock
+
+  # ---------------------------------------------------------------------------
+  # SECTION 5 — Brightness Control
+  # ---------------------------------------------------------------------------
+  - type: entities
+    title: "Brightness Control"
+    show_header_toggle: false
+    entities:
+      - type: buttons
+        entities:
+          - entity: script.smart_clock_set_brightness
+            name: "Low"
+            icon: mdi:brightness-4
+            tap_action:
+              action: call-service
+              service: script.smart_clock_set_brightness
+              service_data:
+                brightness: "3"
+          - entity: script.smart_clock_set_brightness
+            name: "Medium"
+            icon: mdi:brightness-6
+            tap_action:
+              action: call-service
+              service: script.smart_clock_set_brightness
+              service_data:
+                brightness: "8"
+          - entity: script.smart_clock_set_brightness
+            name: "High"
+            icon: mdi:brightness-7
+            tap_action:
+              action: call-service
+              service: script.smart_clock_set_brightness
+              service_data:
+                brightness: "15"

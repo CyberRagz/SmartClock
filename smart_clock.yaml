@@ -1,0 +1,160 @@
+# =============================================================================
+# SMART CLOCK — HOME ASSISTANT PACKAGE
+# =============================================================================
+# Place this file in your packages folder and ensure it is referenced in
+# configuration.yaml:
+#
+#   homeassistant:
+#     packages: !include_dir_named packages/
+#
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# INPUT TEXT
+# -----------------------------------------------------------------------------
+
+input_text:
+
+  smart_clock_message:
+    name: "Smart Clock Custom Message"
+    initial: ""
+    max: 100
+    icon: mdi:message-text
+
+
+# -----------------------------------------------------------------------------
+# INPUT NUMBER
+# -----------------------------------------------------------------------------
+
+input_number:
+
+  smart_clock_display_duration:
+    name: "Message Display Duration"
+    min: 5
+    max: 60
+    step: 5
+    initial: 10
+    unit_of_measurement: "seconds"
+    icon: mdi:timer
+
+
+# -----------------------------------------------------------------------------
+# INPUT SELECT
+# -----------------------------------------------------------------------------
+
+input_select:
+
+  smart_clock_preset_messages:
+    name: "Preset Messages"
+    options:
+      - "Good Morning!"
+      - "Good Night!"
+      - "Welcome Home"
+      - "Have a Great Day"
+      - "Time to Sleep"
+    initial: "Good Morning!"
+    icon: mdi:message-text-outline
+
+
+# -----------------------------------------------------------------------------
+# SCRIPTS
+# -----------------------------------------------------------------------------
+
+script:
+
+  # --- Messaging ---
+
+  smart_clock_show_message:
+    alias: "Smart Clock — Show Custom Message"
+    icon: mdi:send
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "smart_clock/cmd/message"
+          payload: "{{ states('input_text.smart_clock_message') }}"
+
+  smart_clock_show_preset:
+    alias: "Smart Clock — Show Preset Message"
+    icon: mdi:message-fast
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "smart_clock/cmd/preset"
+          payload: "{{ states('input_select.smart_clock_preset_messages') }}"
+
+  # --- Sensor Readouts ---
+
+  smart_clock_show_indoor_temp:
+    alias: "Smart Clock — Show Indoor Temperature"
+    icon: mdi:thermometer
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "smart_clock/cmd/message"
+          payload: "Indoor: {{ states('sensor.bar_controller_bar_temperature') | round(1) }} °C"
+
+  smart_clock_show_outdoor_temp:
+    alias: "Smart Clock — Show Outdoor Temperature"
+    icon: mdi:thermometer
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "smart_clock/cmd/message"
+          payload: "Outdoor: {{ states('sensor.mini_weather_station_outdoor_temperature') | round(1) }} °C"
+
+  smart_clock_show_humidity:
+    alias: "Smart Clock — Show Humidity"
+    icon: mdi:water-percent
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "smart_clock/cmd/message"
+          payload: >-
+            {% if states('sensor.oht_waterlevel_oht_humidity') not in ['unknown', 'unavailable'] %}
+            Humidity: {{ states('sensor.oht_waterlevel_oht_humidity') | float | round(1) }}%
+            {% else %}
+            Humidity: N/A
+            {% endif %}
+
+  smart_clock_show_weather:
+    alias: "Smart Clock — Show Weather"
+    icon: mdi:weather-partly-cloudy
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "smart_clock/cmd/message"
+          payload: "Weather: {{ states('sensor.mini_weather_station_weather_summary') }}"
+
+  # --- Clock Control ---
+
+  smart_clock_return_to_clock:
+    alias: "Smart Clock — Return to Clock"
+    icon: mdi:clock
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "smart_clock/cmd/reset"
+          payload: "1"
+
+  smart_clock_set_brightness:
+    alias: "Smart Clock — Set Brightness"
+    icon: mdi:brightness-6
+    fields:
+      brightness:
+        description: "Brightness level (0–15)"
+        example: "8"
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "smart_clock/cmd/brightness"
+          payload: "{{ brightness | default('8') }}"
+
+  smart_clock_sync_rtc:
+    alias: "Smart Clock — Sync RTC with NTP"
+    icon: mdi:sync
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "smart_clock/cmd/sync_rtc"
+          payload: "1"
