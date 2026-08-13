@@ -12,9 +12,9 @@ An ESP8266-based smart clock with a 6-panel MAX7219 LED matrix display, DS3231 R
 | Real-Time Clock | DS3231 via I²C — maintains time across power cycles |
 | NTP Sync | Syncs to `pool.ntp.org` (IST UTC+5:30) every hour |
 | MQTT | PubSubClient — publishes telemetry, subscribes to commands |
-| Home Assistant | Auto-discovery for RTC time, date, temperature & status sensors |
+| Home Assistant | Auto-discovery for RTC time, date, temperature & status sensors, grouped under one device |
 | OTA Updates | ArduinoOTA over Wi-Fi (`hostname: smartclock`) |
-| Web Server | ESPAsyncWebServer on port 80 (extensible) |
+| Wi-Fi Resilience | Automatic reconnect if the connection drops after boot |
 
 ---
 
@@ -38,8 +38,6 @@ Install the following libraries via Arduino Library Manager or PlatformIO:
 - `NTPClient` by Fabrice Weinberg
 - `MD_Parola` by MajicDesigns
 - `MD_MAX72xx` by MajicDesigns
-- `ESPAsyncTCP` by me-no-dev
-- `ESPAsyncWebServer` by me-no-dev
 - `ArduinoJson` by Benoît Blanchon (v6)
 - `PubSubClient` by Nick O'Leary
 - `RTClib` by Adafruit
@@ -66,10 +64,10 @@ Open `SmartClock.ino` in Arduino IDE, select your ESP8266 board, and upload.
 | Topic | Payload | Notes |
 |---|---|---|
 | `smart_clock/status` | `online` / `offline` | LWT |
-| `smart_clock/rtc/status` | `OK` / `INVALID` | Published every 60 s |
-| `smart_clock/rtc/time` | `HH:MM:SS` | Published every 60 s |
-| `smart_clock/rtc/date` | `DD/MMM/YY` | Published every 60 s |
-| `smart_clock/rtc/temperature` | `°C` float | DS3231 on-chip sensor |
+| `smart_clock/rtc/status` | `OK` / `NTP_ONLY` / `INVALID` | Published every 60 s — see below |
+| `smart_clock/rtc/time` | `HH:MM:SS` | Published every 60 s whenever any valid time source is available |
+| `smart_clock/rtc/date` | `DD/MMM/YY` | Published every 60 s whenever any valid time source is available |
+| `smart_clock/rtc/temperature` | `°C` float | DS3231 on-chip sensor — only published if the RTC chip is physically detected |
 
 ### Commands (subscribe from HA / MQTT client)
 
@@ -91,6 +89,28 @@ The clock publishes MQTT discovery payloads automatically on connection. Four se
 - **RTC Time** — `mdi:clock-digital`
 - **RTC Date** — `mdi:calendar`
 - **RTC Temperature** — device class `temperature`, unit `°C`
+
+---
+
+## Time Source: RTC vs NTP-Only Fallback
+
+The DS3231 RTC is optional, not required. The clock always prefers it when available (it keeps
+ticking correctly across brief Wi-Fi drops and doesn't depend on the network), but if the RTC chip
+isn't detected on the I²C bus — not wired up, a dead backup battery, a faulty module — the clock
+falls back to using NTP time directly instead of just showing dashes. NTP is resynced from
+`pool.ntp.org` hourly once a valid time source exists (30 s retries until then), same as before.
+
+`RTC Status` now reports three states instead of two:
+
+| Status | Meaning |
+|---|---|
+| `OK` | RTC chip present and holding valid time — the normal case |
+| `NTP_ONLY` | No usable RTC (not found, or present but never synced), clock is running on NTP alone |
+| `INVALID` | No valid time source at all yet (no RTC, and NTP hasn't synced — usually just after boot, or no network) |
+
+If the RTC is later fixed (reconnected, battery replaced) while the clock is running, it's detected
+automatically in the background and takes back over as the time source on its next successful sync
+— no reboot needed.
 
 ---
 

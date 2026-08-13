@@ -1,0 +1,16 @@
+# Credentials — never commit real secrets
+secrets.h
+
+# Build artifacts
+*.hex
+*.bin
+*.elf
+build/
+.pio/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
