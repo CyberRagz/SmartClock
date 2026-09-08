@@ -1,0 +1,195 @@
+# =============================================================================
+# STUDY CLOCK - HOME ASSISTANT PACKAGE
+# =============================================================================
+# Convenience scripts that push Home Assistant entity data to the Study Clock's
+# scrolling display (MQTT topic study_clock/cmd/message). The clock itself is
+# already auto-discovered over MQTT - this package only adds the "show sensor X"
+# helpers and a few presets.
+#
+# Install: drop this file in your packages folder and make sure configuration.yaml
+# has:
+#   homeassistant:
+#     packages: !include_dir_named packages/
+#
+# >>> EDIT THE ENTITY IDs BELOW to match your own sensors. <<<
+# The clock font is ASCII-only (use "C", not the degree symbol) and messages
+# are capped at 100 characters.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# INPUT HELPERS
+# -----------------------------------------------------------------------------
+
+input_text:
+  study_clock_message:
+    name: "Study Clock Custom Message"
+    initial: ""
+    max: 100
+    icon: mdi:message-text
+
+input_select:
+  study_clock_presets:
+    name: "Study Clock Presets"
+    options:
+      - "Good Morning"
+      - "Focus Time"
+      - "Break Time"
+      - "Wrap Up"
+      - "Good Night"
+    initial: "Focus Time"
+    icon: mdi:message-text-outline
+
+
+# -----------------------------------------------------------------------------
+# SCRIPTS
+# -----------------------------------------------------------------------------
+
+script:
+
+  # --- free text / presets -------------------------------------------------
+
+  study_clock_show_message:
+    alias: "Study Clock - Show Custom Message"
+    icon: mdi:send
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "study_clock/cmd/message"
+          payload: "{{ states('input_text.study_clock_message') }}"
+
+  study_clock_show_preset:
+    alias: "Study Clock - Show Preset"
+    icon: mdi:message-fast
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "study_clock/cmd/message"
+          payload: "{{ states('input_select.study_clock_presets') }}"
+
+  # --- sensor read-outs --------------------------------------------------
+  # Replace the sensor entity_ids with your own.
+
+  study_clock_show_indoor_temp:
+    alias: "Study Clock - Show Indoor Temperature"
+    icon: mdi:thermometer
+    sequence:
+      - variables:
+          v: "{{ states('sensor.presence_bedroom_temperature') }}"
+      - action: mqtt.publish
+        data:
+          topic: "study_clock/cmd/message"
+          payload: >-
+            {% if v in ['unknown', 'unavailable', 'none'] %}
+            Indoor N/A
+            {% else %}
+            Indoor {{ v | float | round(1) }}C
+            {% endif %}
+
+  study_clock_show_outdoor_temp:
+    alias: "Study Clock - Show Outdoor Temperature"
+    icon: mdi:thermometer
+    sequence:
+      - variables:
+          v: "{{ states('sensor.mini_weather_station_outdoor_temperature') }}"
+      - action: mqtt.publish
+        data:
+          topic: "study_clock/cmd/message"
+          payload: >-
+            {% if v in ['unknown', 'unavailable', 'none'] %}
+            Outdoor N/A
+            {% else %}
+            Outdoor {{ v | float | round(1) }}C
+            {% endif %}
+
+  study_clock_show_humidity:
+    alias: "Study Clock - Show Humidity"
+    icon: mdi:water-percent
+    sequence:
+      - variables:
+          v: "{{ states('sensor.oht_waterlevel_oht_humidity') }}"
+      - action: mqtt.publish
+        data:
+          topic: "study_clock/cmd/message"
+          payload: >-
+            {% if v in ['unknown', 'unavailable', 'none'] %}
+            Humidity N/A
+            {% else %}
+            Humidity {{ v | float | round(0) }} pct
+            {% endif %}
+
+  study_clock_show_weather:
+    alias: "Study Clock - Show Weather"
+    icon: mdi:weather-partly-cloudy
+    sequence:
+      - variables:
+          w: "{{ states('weather.forecast_home') }}"
+          t: "{{ state_attr('weather.forecast_home', 'temperature') }}"
+      - action: mqtt.publish
+        data:
+          topic: "study_clock/cmd/message"
+          payload: >-
+            {% if w in ['unknown', 'unavailable', 'none'] %}
+            Weather N/A
+            {% else %}
+            {{ w | replace('-', ' ') | title }} {{ t | round(0) }}C
+            {% endif %}
+
+  # --- clock control -----------------------------------------------------
+
+  study_clock_show_date:
+    alias: "Study Clock - Show Date"
+    icon: mdi:calendar
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "study_clock/cmd/show_date"
+          payload: "1"
+
+  study_clock_return_to_clock:
+    alias: "Study Clock - Return to Clock"
+    icon: mdi:clock
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "study_clock/cmd/reset"
+          payload: "1"
+
+  study_clock_set_brightness:
+    alias: "Study Clock - Set Brightness"
+    icon: mdi:brightness-6
+    fields:
+      brightness:
+        description: "Brightness level (0-15)"
+        example: "8"
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "study_clock/cmd/brightness"
+          payload: "{{ brightness | default(6) }}"
+
+
+# -----------------------------------------------------------------------------
+# OPTIONAL: rotate info on the display every 10 minutes
+# Uncomment and adjust to taste.
+# -----------------------------------------------------------------------------
+
+# automation:
+#   - alias: "Study Clock - rotating info"
+#     trigger:
+#       - trigger: time_pattern
+#         minutes: "/10"
+#     condition:
+#       - condition: state
+#         entity_id: sensor.study_clock_display
+#         state: "CLOCK"
+#     action:
+#       - choose:
+#           - conditions: "{{ now().minute % 30 < 10 }}"
+#             sequence:
+#               - service: script.study_clock_show_outdoor_temp
+#           - conditions: "{{ now().minute % 30 < 20 }}"
+#             sequence:
+#               - service: script.study_clock_show_humidity
+#         default:
+#           - service: script.study_clock_show_weather
