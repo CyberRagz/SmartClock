@@ -170,26 +170,47 @@ script:
 
 
 # -----------------------------------------------------------------------------
-# OPTIONAL: rotate info on the display every 10 minutes
-# Uncomment and adjust to taste.
+# AUTOMATIONS
 # -----------------------------------------------------------------------------
 
-# automation:
-#   - alias: "Study Clock - rotating info"
-#     trigger:
-#       - trigger: time_pattern
-#         minutes: "/10"
-#     condition:
-#       - condition: state
-#         entity_id: sensor.study_clock_display
-#         state: "CLOCK"
-#     action:
-#       - choose:
-#           - conditions: "{{ now().minute % 30 < 10 }}"
-#             sequence:
-#               - service: script.study_clock_show_outdoor_temp
-#           - conditions: "{{ now().minute % 30 < 20 }}"
-#             sequence:
-#               - service: script.study_clock_show_humidity
-#         default:
-#           - service: script.study_clock_show_weather
+automation:
+
+  # Every 5 minutes, scroll one of four random quotes.
+  - alias: "Study Clock - random quote"
+    id: study_clock_random_quote
+    triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+    actions:
+      - action: mqtt.publish
+        data:
+          topic: "study_clock/cmd/message"
+          payload: >-
+            {{
+              [
+                "If you see a shooting star what will you wish for?",
+                "Relax, tomorrow is another day.",
+                "If you have not learnt anything new today, you still have time.",
+                "You have a future in your past."
+              ] | random
+            }}
+
+  # --- OPTIONAL: rotate sensor info instead / as well (disabled) ---------
+  # - alias: "Study Clock - rotating info"
+  #   triggers:
+  #     - trigger: time_pattern
+  #       minutes: "/10"
+  #   conditions:
+  #     - condition: state
+  #       entity_id: sensor.study_clock_display
+  #       state: "CLOCK"
+  #   actions:
+  #     - choose:
+  #         - conditions: "{{ now().minute % 30 < 10 }}"
+  #           sequence:
+  #             - action: script.study_clock_show_outdoor_temp
+  #         - conditions: "{{ now().minute % 30 < 20 }}"
+  #           sequence:
+  #             - action: script.study_clock_show_humidity
+  #       default:
+  #         - action: script.study_clock_show_weather
