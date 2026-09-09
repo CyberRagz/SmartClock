@@ -247,8 +247,9 @@ bool connectWiFi() {
     Serial.print('.');
   }
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("\nWiFi OK  ip=%s  mac=%s\n",
-                  WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str());
+    Serial.printf("\nWiFi OK  ip=%s  mac=%s  bssid=%s  ch=%d  rssi=%d\n",
+                  WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str(),
+                  WiFi.BSSIDstr().c_str(), WiFi.channel(), WiFi.RSSI());
     return true;
   }
   Serial.println("\nWiFi FAILED");
@@ -768,18 +769,17 @@ void loop() {
   publishTelemetry(false);
 
   // MQTT-down recovery (WiFi is up but the broker socket won't hold):
-  //   4 min  -> bounce WiFi to flush stuck lwIP sockets
-  //   8 min  -> reboot
+  //   ~5 failed attempts -> bounce WiFi to flush stuck lwIP/ARP state
+  //   5 min still down    -> reboot
   if (mqttDownSince != 0 && WiFi.status() == WL_CONNECTED) {
-    unsigned long down = millis() - mqttDownSince;
-    if (down > 480000UL) ESP.restart();
-    else if (down > 240000UL && !mqttWifiBounced) {
+    if (mqttFails >= 5 && !mqttWifiBounced) {
       mqttWifiBounced = true;
-      Serial.println("MQTT down 4 min - bouncing WiFi");
+      Serial.println("MQTT stuck - bouncing WiFi");
       WiFi.disconnect();
-      delay(100);
+      delay(200);
       startWiFi();
     }
+    if (millis() - mqttDownSince > 300000UL) ESP.restart();
   } else {
     mqttWifiBounced = false;
   }
