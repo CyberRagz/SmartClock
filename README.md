@@ -18,7 +18,10 @@ CLK → D5 (GPIO14), DIN → D7 (GPIO13) on both. Time is **NTP only** — no RT
 
 ## Firmware
 
-Arduino IDE, ESP8266 core. Board *NodeMCU 1.0 (ESP‑12E Module)*.
+Arduino IDE, ESP8266 core. **Board: *NodeMCU 1.0 (ESP‑12E Module)*** — not
+"Generic ESP8266 Module" (its default low‑memory lwIP variant has too few TCP
+sockets and caused MQTT `rc=-2` drop‑then‑never‑reconnect on the 6‑panel unit).
+If you must use Generic: lwIP Variant = "v2 Higher Bandwidth", Flash Size = 4MB.
 
 **Libraries** (Library Manager): `MD_Parola`, `MD_MAX72xx`, `ArduinoJson` (v6),
 `PubSubClient`. StudyClock also needs `DHT sensor library` (Adafruit) +
