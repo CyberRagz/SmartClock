@@ -1,167 +1,126 @@
 # =============================================================================
-# SMART CLOCK — LOVELACE DASHBOARD CARD
+# SMART CLOCK - LOVELACE DASHBOARD CARDS
 # =============================================================================
-# How to add this to your dashboard:
-#   1. Open your HA Dashboard → Edit Dashboard
-#   2. Click the "+" to add a card → choose "Manual card"
-#   3. Paste the YAML below (starting from "type: vertical-stack")
+# This file has TWO cards:
+#
+#   CARD 1 (below, "type: vertical-stack") - the main card. Runs entirely on
+#           the MQTT-discovered entities. Paste it as a Manual card.
+#
+#   CARD 2 (near the bottom, "type: grid") - optional "quick messages". Needs
+#           the smart_clock.yaml package loaded (HA restart required).
+#           Paste it as a SECOND Manual card only after the package is in.
+#
+# Entity ids assume HA slugified the device as smart_clock_<name>. If HA
+# appended _2 to any (name collision), fix the ids here.
 # =============================================================================
 
+
+# ===== CARD 1 - main (no package needed) =====================================
 type: vertical-stack
 cards:
 
-  # ---------------------------------------------------------------------------
-  # SECTION 1 — Message Controls (Custom + Presets)
-  # ---------------------------------------------------------------------------
+  - type: markdown
+    content: >
+      # {{ states('sensor.smart_clock_time') }}
+
+      **{{ states('sensor.smart_clock_date') }}**  -  showing:
+      {{ states('sensor.smart_clock_display') }}
+
   - type: entities
-    title: "Smart Clock — Message"
-    icon: mdi:clock-digital
+    title: Message
     show_header_toggle: false
     entities:
-      - entity: input_text.smart_clock_message
-        name: "Custom Message"
-      - entity: input_number.smart_clock_display_duration
-        name: "Display Duration"
-      - entity: input_select.smart_clock_preset_messages
-        name: "Preset Messages"
-
-  # ---------------------------------------------------------------------------
-  # SECTION 2 — RTC Status & Telemetry
-  # ---------------------------------------------------------------------------
-  - type: entities
-    title: "RTC Status"
-    icon: mdi:chip
-    show_header_toggle: false
-    entities:
-      - entity: sensor.smart_clock_rtc_status
-        name: "RTC Status"
-        icon: mdi:clock-check
-      - entity: sensor.smart_clock_rtc_time
-        name: "Current Time"
-        icon: mdi:clock-digital
-      - entity: sensor.smart_clock_rtc_date
-        name: "Current Date"
-        icon: mdi:calendar
-      - entity: sensor.smart_clock_rtc_temperature
-        name: "RTC Temperature"
-        icon: mdi:thermometer
-      - type: button
-        name: "Sync RTC with NTP"
-        icon: mdi:sync
-        action_name: "Sync"
-        tap_action:
-          action: call-service
-          service: script.smart_clock_sync_rtc
-
-  # ---------------------------------------------------------------------------
-  # SECTION 3 — Message Action Buttons (2 columns)
-  # ---------------------------------------------------------------------------
-  - type: horizontal-stack
-    cards:
-      - type: vertical-stack
-        cards:
-          - type: button
-            name: "Show Custom Message"
-            icon: mdi:send
-            tap_action:
-              action: call-service
-              service: script.smart_clock_show_message
-            hold_action:
-              action: none
-          - type: button
-            name: "Show Preset"
-            icon: mdi:message-fast
-            tap_action:
-              action: call-service
-              service: script.smart_clock_show_preset
-            hold_action:
-              action: none
-
-      - type: vertical-stack
-        cards:
-          - type: button
-            name: "Indoor Temp"
-            icon: mdi:thermometer
-            tap_action:
-              action: call-service
-              service: script.smart_clock_show_indoor_temp
-            hold_action:
-              action: none
-          - type: button
-            name: "Outdoor Temp"
-            icon: mdi:thermometer
-            tap_action:
-              action: call-service
-              service: script.smart_clock_show_outdoor_temp
-            hold_action:
-              action: none
+      - entity: text.smart_clock_message
+        name: Scroll text
+      - entity: number.smart_clock_message_repeats
+        name: Repeat count
 
   - type: horizontal-stack
     cards:
-      - type: vertical-stack
-        cards:
-          - type: button
-            name: "Humidity"
-            icon: mdi:water-percent
-            tap_action:
-              action: call-service
-              service: script.smart_clock_show_humidity
-            hold_action:
-              action: none
-          - type: button
-            name: "Weather"
-            icon: mdi:weather-partly-cloudy
-            tap_action:
-              action: call-service
-              service: script.smart_clock_show_weather
-            hold_action:
-              action: none
-
-  # ---------------------------------------------------------------------------
-  # SECTION 4 — Clock Reset
-  # ---------------------------------------------------------------------------
-  - type: entities
-    title: "Clock Actions"
-    show_header_toggle: false
-    entities:
       - type: button
-        name: "Return to Clock"
+        name: Clock
         icon: mdi:clock
-        action_name: "Reset"
-        tap_action:
-          action: call-service
-          service: script.smart_clock_return_to_clock
+        tap_action: { action: toggle }
+        entity: button.smart_clock_show_clock
+      - type: button
+        name: Date
+        icon: mdi:calendar
+        tap_action: { action: toggle }
+        entity: button.smart_clock_show_date
+      - type: button
+        name: Restart
+        icon: mdi:restart
+        tap_action: { action: toggle }
+        entity: button.smart_clock_restart
 
-  # ---------------------------------------------------------------------------
-  # SECTION 5 — Brightness Control
-  # ---------------------------------------------------------------------------
   - type: entities
-    title: "Brightness Control"
+    title: Display
     show_header_toggle: false
     entities:
-      - type: buttons
-        entities:
-          - entity: script.smart_clock_set_brightness
-            name: "Low"
-            icon: mdi:brightness-4
-            tap_action:
-              action: call-service
-              service: script.smart_clock_set_brightness
-              service_data:
-                brightness: "3"
-          - entity: script.smart_clock_set_brightness
-            name: "Medium"
-            icon: mdi:brightness-6
-            tap_action:
-              action: call-service
-              service: script.smart_clock_set_brightness
-              service_data:
-                brightness: "8"
-          - entity: script.smart_clock_set_brightness
-            name: "High"
-            icon: mdi:brightness-7
-            tap_action:
-              action: call-service
-              service: script.smart_clock_set_brightness
-              service_data:
-                brightness: "15"
+      - entity: number.smart_clock_brightness
+        name: Brightness (day)
+      - entity: number.smart_clock_night_brightness
+        name: Brightness (night)
+      - entity: switch.smart_clock_night_dimming
+        name: Night dimming (22:00-07:00)
+      - entity: switch.smart_clock_12_hour_format
+        name: 12-hour face
+
+  - type: entities
+    title: Diagnostics
+    show_header_toggle: false
+    entities:
+      - entity: sensor.smart_clock_wi_fi_signal
+        name: Wi-Fi signal
+      - entity: sensor.smart_clock_ip_address
+        name: IP
+      - entity: sensor.smart_clock_mac_address
+        name: MAC
+      - entity: sensor.smart_clock_uptime
+        name: Uptime
+      - entity: sensor.smart_clock_free_heap
+        name: Free heap
+      - entity: sensor.smart_clock_wi_fi_reconnects
+        name: Wi-Fi reconnects
+
+
+# ===== CARD 2 - optional quick messages (needs smart_clock.yaml) ============
+# Paste separately as a second Manual card, AFTER the package is loaded and
+# HA restarted. Until then these buttons show "action not found".
+#
+# type: grid
+# columns: 2
+# square: false
+# cards:
+#   - type: button
+#     name: Weather
+#     icon: mdi:weather-partly-cloudy
+#     tap_action:
+#       action: perform-action
+#       perform_action: script.smart_clock_show_weather
+#   - type: button
+#     name: Air / CO2
+#     icon: mdi:molecule-co2
+#     tap_action:
+#       action: perform-action
+#       perform_action: script.smart_clock_show_air
+#   - type: button
+#     name: Light
+#     icon: mdi:brightness-5
+#     tap_action:
+#       action: perform-action
+#       perform_action: script.smart_clock_show_light
+#   - type: button
+#     name: Random Quote
+#     icon: mdi:comment-quote
+#     tap_action:
+#       action: perform-action
+#       perform_action: automation.trigger
+#       target:
+#         entity_id: automation.smart_clock_random_quote
+#   - type: button
+#     name: Preset
+#     icon: mdi:message-fast
+#     tap_action:
+#       action: perform-action
+#       perform_action: script.smart_clock_show_preset
