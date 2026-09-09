@@ -81,22 +81,6 @@ script:
         target:
           entity_id: button.study_clock_show_climate
 
-  study_clock_show_outdoor_temp:
-    alias: "Study Clock - Show Outdoor Temperature"
-    icon: mdi:thermometer
-    sequence:
-      - variables:
-          v: "{{ states('sensor.mini_weather_station_outdoor_temperature') }}"
-      - action: mqtt.publish
-        data:
-          topic: "study_clock/cmd/message"
-          payload: >-
-            {% if v in ['unknown', 'unavailable', 'none'] %}
-            Outdoor N/A
-            {% else %}
-            Outdoor {{ v | float | round(1) }}C
-            {% endif %}
-
   study_clock_show_humidity:
     alias: "Study Clock - Show Humidity"
     icon: mdi:water-percent
@@ -113,21 +97,61 @@ script:
             Humidity {{ v | float | round(0) }} pct
             {% endif %}
 
+  # --- Home Weather Station (ESPHome device "Home Weather Station") --------
+  # Entity ids are ESPHome's default slugs. Verify in Developer Tools -> States
+  # (filter "weather_station") and adjust if HA numbered any of them.
+
   study_clock_show_weather:
     alias: "Study Clock - Show Weather"
     icon: mdi:weather-partly-cloudy
     sequence:
       - variables:
-          w: "{{ states('weather.forecast_home') }}"
-          t: "{{ state_attr('weather.forecast_home', 'temperature') }}"
+          trend: "{{ states('sensor.home_weather_station_weather_trend') }}"
+          p: "{{ states('sensor.home_weather_station_barometric_pressure') }}"
+          ptrend: "{{ states('sensor.home_weather_station_pressure_trend') }}"
       - action: mqtt.publish
         data:
           topic: "study_clock/cmd/message"
           payload: >-
-            {% if w in ['unknown', 'unavailable', 'none'] %}
-            Weather N/A
+            {% if p in ['unknown', 'unavailable', 'none'] %}
+            Weather station offline
             {% else %}
-            {{ w | replace('-', ' ') | title }} {{ t | round(0) }}C
+            {{ trend if trend not in ['unknown','unavailable','none'] else ptrend }}
+            - {{ p | float | round(0) }} hPa
+            {% endif %}
+
+  study_clock_show_air:
+    alias: "Study Clock - Show Air Quality"
+    icon: mdi:molecule-co2
+    sequence:
+      - variables:
+          co2: "{{ states('sensor.home_weather_station_co2') }}"
+          rating: "{{ states('sensor.home_weather_station_air_quality_rating') }}"
+      - action: mqtt.publish
+        data:
+          topic: "study_clock/cmd/message"
+          payload: >-
+            {% if co2 in ['unknown', 'unavailable', 'none'] %}
+            Air quality N/A
+            {% else %}
+            CO2 {{ co2 | float | round(0) }} ppm
+            {%- if rating not in ['unknown','unavailable','none'] %} - {{ rating }}{% endif %}
+            {% endif %}
+
+  study_clock_show_light:
+    alias: "Study Clock - Show Ambient Light"
+    icon: mdi:brightness-5
+    sequence:
+      - variables:
+          lx: "{{ states('sensor.home_weather_station_ambient_light') }}"
+      - action: mqtt.publish
+        data:
+          topic: "study_clock/cmd/message"
+          payload: >-
+            {% if lx in ['unknown', 'unavailable', 'none'] %}
+            Light N/A
+            {% else %}
+            Light {{ lx | float | round(0) }} lx
             {% endif %}
 
   # --- clock control -----------------------------------------------------
@@ -203,9 +227,9 @@ automation:
   #     - choose:
   #         - conditions: "{{ now().minute % 30 < 10 }}"
   #           sequence:
-  #             - action: script.study_clock_show_outdoor_temp
+  #             - action: script.study_clock_show_indoor_climate
   #         - conditions: "{{ now().minute % 30 < 20 }}"
   #           sequence:
-  #             - action: script.study_clock_show_humidity
+  #             - action: script.study_clock_show_weather
   #       default:
-  #         - action: script.study_clock_show_weather
+  #         - action: script.study_clock_show_air
