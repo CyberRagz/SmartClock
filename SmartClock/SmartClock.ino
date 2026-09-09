@@ -157,6 +157,9 @@ bool     pendingRestart       = false;
 bool     pendingStates        = false;   // publish state topics from loop()
 bool     prefsDirty           = false;   // savePrefs() from loop()
 unsigned long wifiReconnects  = 0;
+uint8_t  mqttFails            = 0;        // consecutive MQTT connect failures
+unsigned long mqttDownSince   = 0;        // millis() when MQTT first went down (0 = up)
+bool     mqttWifiBounced      = false;    // did we bounce WiFi this outage yet
 
 // DHT22 (unused unless ENABLE_DHT)
 float    dhtTemp              = NAN;
@@ -450,17 +453,28 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void mqttReconnect() {
-  if (mqtt.connected()) return;
+  if (mqtt.connected()) { mqttFails = 0; mqttDownSince = 0; return; }
+
+  if (mqttDownSince == 0) mqttDownSince = millis();
+
   static unsigned long last = 0;
-  if (millis() - last < MQTT_RETRY_INTERVAL) return;
+  // back off as failures pile up so lwIP TIME_WAIT sockets can clear
+  unsigned long interval = mqttFails < 3 ? 5000UL
+                         : mqttFails < 8 ? 20000UL : 60000UL;
+  if (millis() - last < interval) return;
   last = millis();
+
+  espClient.stop();   // clear any half-open socket before we try again
 
   Serial.print("MQTT... ");
   if (mqtt.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASS,
                    T_AVAIL, 0, true, "offline")) {
     Serial.println("connected");
+    mqttFails = 0;
+    mqttDownSince = 0;
     mqtt.publish(T_AVAIL, "online", true);
     publishDiscovery();
+    mqtt.loop(); yield();          // let lwIP drain the discovery burst
 
     mqtt.subscribe(T_CMD_MESSAGE);
     mqtt.subscribe(T_CMD_BRIGHTNESS);
@@ -476,11 +490,15 @@ void mqttReconnect() {
     mqtt.subscribe(T_CMD_RESTART);
 
     mqtt.publish(T_MAC, WiFi.macAddress().c_str(), true);
+    mqtt.loop(); yield();
     publishStates();
+    mqtt.loop(); yield();
     publishTelemetry(true);
   } else {
-    Serial.printf("failed rc=%d (rssi=%d)\n", mqtt.state(), WiFi.RSSI());
-    espClient.stop();   // release the socket so we don't leak lwIP handles
+    mqttFails++;
+    Serial.printf("failed rc=%d (rssi=%d, fails=%u)\n",
+                  mqtt.state(), WiFi.RSSI(), mqttFails);
+    espClient.stop();
   }
 }
 
@@ -510,6 +528,8 @@ void discovery(const char* component, const char* objectId, const char* name, F 
   char payload[640];
   size_t n = serializeJson(doc, payload, sizeof(payload));
   mqtt.publish(topic, (const uint8_t*)payload, n, true);
+  mqtt.loop();          // pump the socket between payloads so the TCP send
+  yield();              // buffer doesn't overflow on a small-buffer lwIP build
 }
 
 void publishDiscovery() {
@@ -746,6 +766,23 @@ void loop() {
   mqtt.loop();
   readDht();
   publishTelemetry(false);
+
+  // MQTT-down recovery (WiFi is up but the broker socket won't hold):
+  //   4 min  -> bounce WiFi to flush stuck lwIP sockets
+  //   8 min  -> reboot
+  if (mqttDownSince != 0 && WiFi.status() == WL_CONNECTED) {
+    unsigned long down = millis() - mqttDownSince;
+    if (down > 480000UL) ESP.restart();
+    else if (down > 240000UL && !mqttWifiBounced) {
+      mqttWifiBounced = true;
+      Serial.println("MQTT down 4 min - bouncing WiFi");
+      WiFi.disconnect();
+      delay(100);
+      startWiFi();
+    }
+  } else {
+    mqttWifiBounced = false;
+  }
 
   // deferred work raised by the MQTT callback
   if (prefsDirty)    { prefsDirty = false; savePrefs(); }
