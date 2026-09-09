@@ -1,23 +1,24 @@
 # =============================================================================
-# STUDY CLOCK - LOVELACE DASHBOARD CARD
+# STUDY CLOCK - LOVELACE DASHBOARD CARDS
 # =============================================================================
-# Add to a dashboard:
-#   Edit Dashboard -> "+" Add Card -> Manual -> paste from "type: vertical-stack".
+# This file has TWO cards:
 #
-# Uses the MQTT-discovered entities directly. The "Quick messages" section
-# needs the optional study_clock.yaml package (scripts + automation); delete
-# that section if you don't use it.
+#   CARD 1 (below, "type: vertical-stack") - the main card. Runs entirely on
+#           the MQTT-discovered entities. Paste it as a Manual card.
 #
-# Entity ids assume Home Assistant slugified them as study_clock_<name>. If HA
-# appended _2 to any of them (name collision), fix the ids below.
+#   CARD 2 (near the bottom, "type: grid") - optional "quick messages". Needs
+#           the study_clock.yaml package loaded (Settings restart required).
+#           Paste it as a SECOND Manual card only after the package is in.
+#
+# Entity ids assume HA slugified the device as study_clock_<name>. If HA
+# appended _2 to any (name collision), fix the ids here.
 # =============================================================================
 
+
+# ===== CARD 1 - main (no package needed) =====================================
 type: vertical-stack
 cards:
 
-  # ---------------------------------------------------------------------------
-  # Live readout
-  # ---------------------------------------------------------------------------
   - type: markdown
     content: >
       # {{ states('sensor.study_clock_time') }}
@@ -28,9 +29,6 @@ cards:
       {{ states('sensor.study_clock_temperature') }} °C  ·
       {{ states('sensor.study_clock_humidity') }} %
 
-  # ---------------------------------------------------------------------------
-  # Message
-  # ---------------------------------------------------------------------------
   - type: entities
     title: Message
     show_header_toggle: false
@@ -40,9 +38,6 @@ cards:
       - entity: number.study_clock_message_repeats
         name: Repeat count
 
-  # ---------------------------------------------------------------------------
-  # Actions
-  # ---------------------------------------------------------------------------
   - type: horizontal-stack
     cards:
       - type: button
@@ -66,9 +61,6 @@ cards:
         tap_action: { action: toggle }
         entity: button.study_clock_restart
 
-  # ---------------------------------------------------------------------------
-  # Display settings
-  # ---------------------------------------------------------------------------
   - type: entities
     title: Display
     show_header_toggle: false
@@ -82,54 +74,6 @@ cards:
       - entity: switch.study_clock_12_hour_format
         name: 12-hour face
 
-  # ---------------------------------------------------------------------------
-  # Quick messages  --  needs study_clock.yaml package (delete if unused)
-  # ---------------------------------------------------------------------------
-  - type: grid
-    columns: 2
-    square: false
-    cards:
-      - type: button
-        name: Climate
-        icon: mdi:home-thermometer
-        tap_action: { action: toggle }
-        entity: button.study_clock_show_climate
-      - type: button
-        name: Weather
-        icon: mdi:weather-partly-cloudy
-        tap_action:
-          action: perform-action
-          perform_action: script.study_clock_show_weather
-      - type: button
-        name: Air / CO2
-        icon: mdi:molecule-co2
-        tap_action:
-          action: perform-action
-          perform_action: script.study_clock_show_air
-      - type: button
-        name: Light
-        icon: mdi:brightness-5
-        tap_action:
-          action: perform-action
-          perform_action: script.study_clock_show_light
-      - type: button
-        name: Random Quote
-        icon: mdi:comment-quote
-        tap_action:
-          action: perform-action
-          perform_action: automation.trigger
-          target:
-            entity_id: automation.study_clock_random_quote
-      - type: button
-        name: Preset
-        icon: mdi:message-fast
-        tap_action:
-          action: perform-action
-          perform_action: script.study_clock_show_preset
-
-  # ---------------------------------------------------------------------------
-  # Diagnostics
-  # ---------------------------------------------------------------------------
   - type: entities
     title: Diagnostics
     show_header_toggle: false
@@ -146,3 +90,51 @@ cards:
         name: Free heap
       - entity: sensor.study_clock_wi_fi_reconnects
         name: Wi-Fi reconnects
+
+
+# ===== CARD 2 - optional quick messages (needs study_clock.yaml) =============
+# Paste separately as a second Manual card, AFTER the package is loaded and
+# HA restarted. Until then these buttons show "action not found".
+#
+# type: grid
+# columns: 2
+# square: false
+# cards:
+#   - type: button
+#     name: Weather
+#     icon: mdi:weather-partly-cloudy
+#     tap_action:
+#       action: perform-action
+#       perform_action: script.study_clock_show_weather
+#   - type: button
+#     name: Air / CO2
+#     icon: mdi:molecule-co2
+#     tap_action:
+#       action: perform-action
+#       perform_action: script.study_clock_show_air
+#   - type: button
+#     name: Light
+#     icon: mdi:brightness-5
+#     tap_action:
+#       action: perform-action
+#       perform_action: script.study_clock_show_light
+#   - type: button
+#     name: Humidity
+#     icon: mdi:water-percent
+#     tap_action:
+#       action: perform-action
+#       perform_action: script.study_clock_show_humidity
+#   - type: button
+#     name: Random Quote
+#     icon: mdi:comment-quote
+#     tap_action:
+#       action: perform-action
+#       perform_action: automation.trigger
+#       target:
+#         entity_id: automation.study_clock_random_quote
+#   - type: button
+#     name: Preset
+#     icon: mdi:message-fast
+#     tap_action:
+#       action: perform-action
+#       perform_action: script.study_clock_show_preset
