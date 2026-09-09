@@ -1,59 +1,43 @@
 # =============================================================================
-# SMART CLOCK — HOME ASSISTANT PACKAGE
+# SMART CLOCK - HOME ASSISTANT PACKAGE
 # =============================================================================
-# Place this file in your packages folder and ensure it is referenced in
-# configuration.yaml:
+# Convenience scripts that push Home Assistant entity data to the Smart Clock's
+# scrolling display (MQTT topic smart_clock/cmd/message). The clock itself is
+# already auto-discovered over MQTT - this package only adds the "show sensor X"
+# helpers and a few presets.
 #
+# Install: drop this file in your packages folder and make sure configuration.yaml
+# has:
 #   homeassistant:
 #     packages: !include_dir_named packages/
 #
+# >>> EDIT THE ENTITY IDs BELOW to match your own sensors. <<<
+# The clock font is ASCII-only (use "C", not the degree symbol) and messages
+# are capped at 100 characters.
 # =============================================================================
 
 
 # -----------------------------------------------------------------------------
-# INPUT TEXT
+# INPUT HELPERS
 # -----------------------------------------------------------------------------
 
 input_text:
-
   smart_clock_message:
     name: "Smart Clock Custom Message"
     initial: ""
     max: 100
     icon: mdi:message-text
 
-
-# -----------------------------------------------------------------------------
-# INPUT NUMBER
-# -----------------------------------------------------------------------------
-
-input_number:
-
-  smart_clock_display_duration:
-    name: "Message Display Duration"
-    min: 5
-    max: 60
-    step: 5
-    initial: 10
-    unit_of_measurement: "seconds"
-    icon: mdi:timer
-
-
-# -----------------------------------------------------------------------------
-# INPUT SELECT
-# -----------------------------------------------------------------------------
-
 input_select:
-
-  smart_clock_preset_messages:
-    name: "Preset Messages"
+  smart_clock_presets:
+    name: "Smart Clock Presets"
     options:
-      - "Good Morning!"
-      - "Good Night!"
+      - "Good Morning"
       - "Welcome Home"
+      - "Dinner Time"
       - "Have a Great Day"
-      - "Time to Sleep"
-    initial: "Good Morning!"
+      - "Good Night"
+    initial: "Good Morning"
     icon: mdi:message-text-outline
 
 
@@ -63,10 +47,10 @@ input_select:
 
 script:
 
-  # --- Messaging ---
+  # --- free text / presets -------------------------------------------------
 
   smart_clock_show_message:
-    alias: "Smart Clock — Show Custom Message"
+    alias: "Smart Clock - Show Custom Message"
     icon: mdi:send
     sequence:
       - action: mqtt.publish
@@ -75,61 +59,88 @@ script:
           payload: "{{ states('input_text.smart_clock_message') }}"
 
   smart_clock_show_preset:
-    alias: "Smart Clock — Show Preset Message"
+    alias: "Smart Clock - Show Preset"
     icon: mdi:message-fast
     sequence:
       - action: mqtt.publish
         data:
-          topic: "smart_clock/cmd/preset"
-          payload: "{{ states('input_select.smart_clock_preset_messages') }}"
-
-  # --- Sensor Readouts ---
-
-  smart_clock_show_indoor_temp:
-    alias: "Smart Clock — Show Indoor Temperature"
-    icon: mdi:thermometer
-    sequence:
-      - action: mqtt.publish
-        data:
           topic: "smart_clock/cmd/message"
-          payload: "Indoor: {{ states('sensor.bar_controller_bar_temperature') | round(1) }} °C"
+          payload: "{{ states('input_select.smart_clock_presets') }}"
 
-  smart_clock_show_outdoor_temp:
-    alias: "Smart Clock — Show Outdoor Temperature"
-    icon: mdi:thermometer
-    sequence:
-      - action: mqtt.publish
-        data:
-          topic: "smart_clock/cmd/message"
-          payload: "Outdoor: {{ states('sensor.mini_weather_station_outdoor_temperature') | round(1) }} °C"
+  # --- Home Weather Station (ESPHome device "Home Weather Station") --------
+  # Confirmed entity ids: sensor.home_weather_station_barometric_pressure,
+  # _pressure_trend (numeric hPa/3h), _ambient_light. CO2 / air-quality-rating
+  # slugs follow the same pattern - verify in Developer Tools -> States.
 
-  smart_clock_show_humidity:
-    alias: "Smart Clock — Show Humidity"
-    icon: mdi:water-percent
+  smart_clock_show_weather:
+    alias: "Smart Clock - Show Weather"
+    icon: mdi:weather-partly-cloudy
     sequence:
+      - variables:
+          p: "{{ states('sensor.home_weather_station_barometric_pressure') | float(0) }}"
+          d: "{{ states('sensor.home_weather_station_pressure_trend') | float(0) }}"
+      - variables:
+          label: "{% if d >= 1 %}Rising{% elif d <= -1 %}Falling{% else %}Steady{% endif %}"
       - action: mqtt.publish
         data:
           topic: "smart_clock/cmd/message"
           payload: >-
-            {% if states('sensor.oht_waterlevel_oht_humidity') not in ['unknown', 'unavailable'] %}
-            Humidity: {{ states('sensor.oht_waterlevel_oht_humidity') | float | round(1) }}%
-            {% else %}
-            Humidity: N/A
-            {% endif %}
+            {% if p == 0 %}Weather station offline{% else %}{{ '%.0f' % p }} hPa {{ label }} ({{ '%+.1f' % d }}/3h){% endif %}
 
-  smart_clock_show_weather:
-    alias: "Smart Clock — Show Weather"
-    icon: mdi:weather-partly-cloudy
+  smart_clock_show_air:
+    alias: "Smart Clock - Show Air Quality"
+    icon: mdi:molecule-co2
     sequence:
+      - variables:
+          co2: "{{ states('sensor.home_weather_station_co2') }}"
+          rating: "{{ states('sensor.home_weather_station_air_quality_rating') }}"
       - action: mqtt.publish
         data:
           topic: "smart_clock/cmd/message"
-          payload: "Weather: {{ states('sensor.mini_weather_station_weather_summary') }}"
+          payload: >-
+            {% if co2 in ['unknown', 'unavailable', 'none'] %}
+            Air quality N/A
+            {% else %}
+            CO2 {{ '%.0f' % (co2 | float) }} ppm
+            {%- if rating not in ['unknown','unavailable','none'] %} - {{ rating }}{% endif %}
+            {% endif %}
 
-  # --- Clock Control ---
+  smart_clock_show_light:
+    alias: "Smart Clock - Show Ambient Light"
+    icon: mdi:brightness-5
+    sequence:
+      - variables:
+          lx: "{{ states('sensor.home_weather_station_ambient_light') | float(-1) }}"
+      - action: mqtt.publish
+        data:
+          topic: "smart_clock/cmd/message"
+          payload: >-
+            {% if lx < 0 %}Light N/A
+            {% elif lx >= 1000 %}Light {{ '%.1f' % (lx / 1000) }} klx
+            {% else %}Light {{ '%.0f' % lx }} lx{% endif %}
+
+  # --- indoor climate: needs a DHT22 fitted + ENABLE_DHT=1 in the firmware ---
+  # smart_clock_show_indoor_climate:
+  #   alias: "Smart Clock - Show Indoor Climate"
+  #   icon: mdi:home-thermometer
+  #   sequence:
+  #     - action: button.press
+  #       target:
+  #         entity_id: button.smart_clock_show_climate
+
+  # --- clock control -----------------------------------------------------
+
+  smart_clock_show_date:
+    alias: "Smart Clock - Show Date"
+    icon: mdi:calendar
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "smart_clock/cmd/show_date"
+          payload: "1"
 
   smart_clock_return_to_clock:
-    alias: "Smart Clock — Return to Clock"
+    alias: "Smart Clock - Return to Clock"
     icon: mdi:clock
     sequence:
       - action: mqtt.publish
@@ -138,23 +149,58 @@ script:
           payload: "1"
 
   smart_clock_set_brightness:
-    alias: "Smart Clock — Set Brightness"
+    alias: "Smart Clock - Set Brightness"
     icon: mdi:brightness-6
     fields:
       brightness:
-        description: "Brightness level (0–15)"
+        description: "Brightness level (0-15)"
         example: "8"
     sequence:
       - action: mqtt.publish
         data:
           topic: "smart_clock/cmd/brightness"
-          payload: "{{ brightness | default('8') }}"
+          payload: "{{ brightness | default(6) }}"
 
-  smart_clock_sync_rtc:
-    alias: "Smart Clock — Sync RTC with NTP"
-    icon: mdi:sync
-    sequence:
+
+# -----------------------------------------------------------------------------
+# AUTOMATIONS
+# -----------------------------------------------------------------------------
+
+automation:
+
+  # Every 5 minutes, scroll one of four random quotes.
+  - alias: "Smart Clock - random quote"
+    id: smart_clock_random_quote
+    triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+    actions:
       - action: mqtt.publish
         data:
-          topic: "smart_clock/cmd/sync_rtc"
-          payload: "1"
+          topic: "smart_clock/cmd/message"
+          payload: >-
+            {{
+              [
+                "If you see a shooting star what will you wish for?",
+                "Relax, tomorrow is another day.",
+                "If you have not learnt anything new today, you still have time.",
+                "You have a future in your past."
+              ] | random
+            }}
+
+  # --- OPTIONAL: rotate sensor info instead / as well (disabled) ---------
+  # - alias: "Smart Clock - rotating info"
+  #   triggers:
+  #     - trigger: time_pattern
+  #       minutes: "/10"
+  #   conditions:
+  #     - condition: state
+  #       entity_id: sensor.smart_clock_display
+  #       state: "CLOCK"
+  #   actions:
+  #     - choose:
+  #         - conditions: "{{ now().minute % 30 < 15 }}"
+  #           sequence:
+  #             - action: script.smart_clock_show_weather
+  #       default:
+  #         - action: script.smart_clock_show_air

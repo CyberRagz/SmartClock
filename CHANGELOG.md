@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented here.
 
+## [2.0.0] — 2026-09-09
+
+### Added — StudyClock (second unit)
+- New `StudyClock/` sketch: 4× MAX7219, CS on D4, no RTC, static IP, DHT22
+  temperature/humidity, self-contained MQTT discovery under a "Study Clock"
+  device. `study_clock.yaml` package + `StudyClock/lovelace_card.yaml`.
+
+### Changed — SmartClock rebuilt to StudyClock parity
+- **DS3231 / RTClib / Wire / NTPClient removed.** Time is now NTP only via the
+  ESP8266 core `configTime()` + `<time.h>` (`Asia/Kolkata`). Fewer libraries,
+  correct calendar math, DST-ready.
+- **`mqtt.setBufferSize(768)`** — the old code never set it, so HA discovery
+  payloads (~380 B) could be silently dropped by PubSubClient's 256 B default.
+- **Fixed dangling-pointer bug**: scrolled messages are now copied into a static
+  buffer instead of handing MD_Parola `customMessage.c_str()`, which could
+  realloc mid-scroll and corrupt the display.
+- Settings **persisted to EEPROM**: brightness, night brightness, night-dimming
+  toggle, 12/24h, message-repeat count.
+- **Night dimming** 22:00–07:00 using the device's own clock.
+- **Self-contained HA discovery** for the controls — Message text, Brightness /
+  Night Brightness / Message Repeats numbers, Night Dimming / 12 Hour switches,
+  Show Clock / Show Date / Restart buttons. `smart_clock.yaml` is now optional.
+- **Diagnostic sensors**: MAC, free heap, uptime, Wi-Fi reconnect count.
+- **OTA progress bar** on the panel; `SHOW_CLOCK_RUN` only redraws on change
+  (fixes colon flicker); weekday added to the date scroll.
+- **Static IP** `192.168.0.171` (`USE_STATIC_IP 0` for DHCP).
+- **DHT22 support** compiled in behind `#define ENABLE_DHT 0` — flip to 1 +
+  wire to D2 + install the Adafruit DHT libraries to enable.
+- Dead code removed (`lastStateChange`, `scrollComplete`); `°C` moved to an
+  ASCII-source escape.
+- `smart_clock.yaml` / `lovelace_card.yaml` rewritten for the new entity set
+  (weather-station scripts, random-quote automation, two-card split).
+
+### Removed
+- `smart_clock/rtc/*` topics and `smart_clock/cmd/sync_rtc` — no RTC. Time and
+  date now publish to `smart_clock/time` and `smart_clock/date`.
+
 ## [1.1.0] — 2026-08-13
 
 ### Fixed

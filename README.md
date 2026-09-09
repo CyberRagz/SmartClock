@@ -1,242 +1,101 @@
 # SmartClock
 
-An ESP8266-based smart clock with a 6-panel MAX7219 LED matrix display, DS3231 RTC, NTP time synchronisation, MQTT integration, and Home Assistant auto-discovery.
+ESP8266 + MAX7219 LED‑matrix clock with NTP time, MQTT, and Home Assistant
+auto‑discovery. Two units in this repo, same firmware architecture:
 
-> **Second unit:** [`StudyClock/`](StudyClock/) is this sketch retargeted for a
-> 4-panel, no-RTC build (CS on D4, NTP-only, `study_clock/…` MQTT topics, its own
-> Home Assistant device). See [StudyClock/README.md](StudyClock/README.md).
+| | [`SmartClock/`](SmartClock/) | [`StudyClock/`](StudyClock/) |
+|---|---|---|
+| Panels | 6× MAX7219 (48×8) | 4× MAX7219 (32×8) |
+| CS pin | D8 (GPIO15) | D4 (GPIO2) |
+| Static IP | `192.168.0.171` | `192.168.0.170` |
+| MQTT namespace | `smart_clock/…` | `study_clock/…` |
+| HA device | "Smart Clock" | "Study Clock" |
+| Climate sensor | DHT22 support present, compiled out (`ENABLE_DHT 0`) | DHT22 on D2 |
 
----
-
-## Features
-
-| Feature | Details |
-|---|---|
-| LED Matrix | 6× MAX7219 panels driven by MD_Parola / MD_MAX72xx |
-| Real-Time Clock | DS3231 via I²C — maintains time across power cycles |
-| NTP Sync | Syncs to `pool.ntp.org` (IST UTC+5:30) every hour |
-| MQTT | PubSubClient — publishes telemetry, subscribes to commands |
-| Home Assistant | Auto-discovery for RTC time, date, temperature & status sensors, grouped under one device |
-| OTA Updates | ArduinoOTA over Wi-Fi (`hostname: smartclock`) |
-| Wi-Fi Resilience | Automatic reconnect if the connection drops after boot |
+CLK → D5 (GPIO14), DIN → D7 (GPIO13) on both. Time is **NTP only** — no RTC.
 
 ---
 
-## Hardware
+## Firmware
 
-| Component | Connection |
-|---|---|
-| NodeMCU / ESP8266 | — |
-| 6× MAX7219 LED panels | CLK → D5 (GPIO14), DATA → D7 (GPIO13), CS → D8 (GPIO15) |
-| DS3231 RTC module | SDA → D2 (GPIO4), SCL → D1 (GPIO5) |
+Arduino IDE, ESP8266 core. Board *NodeMCU 1.0 (ESP‑12E Module)*.
 
----
-
-## Getting Started
-
-### 1 — Prerequisites
-
-Install the following libraries via Arduino Library Manager or PlatformIO:
-
-- `ESP8266WiFi` (bundled with ESP8266 core)
-- `NTPClient` by Fabrice Weinberg
-- `MD_Parola` by MajicDesigns
-- `MD_MAX72xx` by MajicDesigns
-- `ArduinoJson` by Benoît Blanchon (v6)
-- `PubSubClient` by Nick O'Leary
-- `RTClib` by Adafruit
-- `ArduinoOTA` (bundled with ESP8266 core)
-
-### 2 — Configure credentials
+**Libraries** (Library Manager): `MD_Parola`, `MD_MAX72xx`, `ArduinoJson` (v6),
+`PubSubClient`. StudyClock also needs `DHT sensor library` (Adafruit) +
+`Adafruit Unified Sensor`.
 
 ```bash
-cp secrets_example.h secrets.h
+cp SmartClock/secrets_example.h SmartClock/secrets.h    # SmartClock
+cp StudyClock/secrets_example.h StudyClock/secrets.h    # StudyClock
+# then edit Wi-Fi + MQTT + OTA password in each
 ```
 
-Edit `secrets.h` and fill in your Wi-Fi SSID/password, MQTT broker address, credentials, and OTA password. **`secrets.h` is git-ignored and will never be committed.**
+`secrets.h` is git‑ignored. First flash over USB; after that OTA works
+(hostname `smartclock` / `studyclock`, password from `secrets.h`). If the build
+errors on `secrets.h` with "extended character", replace any non‑ASCII box
+characters in its comments with `--`.
 
-### 3 — Flash
+### Features
 
-Open `SmartClock.ino` in Arduino IDE, select your ESP8266 board, and upload.
-
----
-
-## MQTT Topics
-
-### Telemetry (published by the clock)
-
-| Topic | Payload | Notes |
-|---|---|---|
-| `smart_clock/status` | `online` / `offline` | LWT |
-| `smart_clock/rtc/status` | `OK` / `NTP_ONLY` / `INVALID` | Published every 60 s — see below |
-| `smart_clock/rtc/time` | `HH:MM:SS` | Published every 60 s whenever any valid time source is available |
-| `smart_clock/rtc/date` | `DD/MMM/YY` | Published every 60 s whenever any valid time source is available |
-| `smart_clock/rtc/temperature` | `°C` float | DS3231 on-chip sensor — only published if the RTC chip is physically detected |
-
-### Commands (subscribe from HA / MQTT client)
-
-| Topic | Payload | Action |
-|---|---|---|
-| `smart_clock/cmd/message` | Any string | Scroll custom message on display |
-| `smart_clock/cmd/preset` | Any string | Same as message |
-| `smart_clock/cmd/brightness` | `0`–`15` | Set display intensity |
-| `smart_clock/cmd/sync_rtc` | any | Force NTP → RTC sync |
-| `smart_clock/cmd/reset` | any | Return to clock display |
+- **NTP** via `configTime()` (`Asia/Kolkata`, no DST). Retries every 30 s until
+  synced, then hourly. Shows `--:--` until first sync.
+- **Display** (single‑zone MD_Parola): `HH:MM` with blinking colon, weekday+date
+  auto‑scrolls every 5 min, messages scroll on demand (1–5 repeats).
+- **Persisted to EEPROM**: brightness, night brightness, night‑dimming toggle,
+  12/24‑hour, message‑repeat count.
+- **Night dimming** 22:00–07:00 (edit `NIGHT_START`/`NIGHT_END`) off the
+  device's own clock — works with HA offline.
+- **OTA** with a progress bar on the panel; `otaActive` freezes the loop during
+  a flash write.
+- **Wi‑Fi** auto‑reconnect; static IP (`USE_STATIC_IP 0` for DHCP).
+- **Self‑contained HA discovery** — no YAML package required for the controls.
 
 ---
 
 ## Home Assistant
 
-The clock publishes MQTT discovery payloads automatically on connection. Four sensors will appear in HA:
+Auto‑discovered under one device. Entities (`smart_clock_*` / `study_clock_*`):
 
-- **RTC Status** — `mdi:clock-check`
-- **RTC Time** — `mdi:clock-digital`
-- **RTC Date** — `mdi:calendar`
-- **RTC Temperature** — device class `temperature`, unit `°C`
-
----
-
-## Time Source: RTC vs NTP-Only Fallback
-
-The DS3231 RTC is optional, not required. The clock always prefers it when available (it keeps
-ticking correctly across brief Wi-Fi drops and doesn't depend on the network), but if the RTC chip
-isn't detected on the I²C bus — not wired up, a dead backup battery, a faulty module — the clock
-falls back to using NTP time directly instead of just showing dashes. NTP is resynced from
-`pool.ntp.org` hourly once a valid time source exists (30 s retries until then), same as before.
-
-`RTC Status` now reports three states instead of two:
-
-| Status | Meaning |
+| Group | Entities |
 |---|---|
-| `OK` | RTC chip present and holding valid time — the normal case |
-| `NTP_ONLY` | No usable RTC (not found, or present but never synced), clock is running on NTP alone |
-| `INVALID` | No valid time source at all yet (no RTC, and NTP hasn't synced — usually just after boot, or no network) |
+| Sensors | Time, Date, Display state |
+| Diagnostic | Wi‑Fi Signal, IP, MAC, Free Heap, Uptime, Wi‑Fi Reconnects |
+| Controls | Message (text), Brightness |
+| Config | Night Brightness, Message Repeats, Night Dimming, 12 Hour Format |
+| Buttons | Show Clock, Show Date, Restart *(+ Show Climate when DHT enabled)* |
 
-If the RTC is later fixed (reconnected, battery replaced) while the clock is running, it's detected
-automatically in the background and takes back over as the time source on its next successful sync
-— no reboot needed.
+### MQTT topics
 
----
+Telemetry is retained. Commands:
 
-## Display State Machine
-
-```
-SHOW_WELCOME → SHOW_BRAND → SHOW_IP → SHOW_CLOCK_ENTRY
-                                              ↕
-                                       SHOW_CLOCK_RUN
-                                              ↕  (every 5 min)
-                                         SHOW_DATE
-                                              ↕
-                                      SHOW_MESSAGE (on MQTT cmd)
-```
-
----
-
-## OTA Updates
-
-Once running, the clock is reachable as `smartclock.local` on the network. Use Arduino IDE → Ports to find it and upload wirelessly.
-
----
-# Home Assistant Integration
-
-This folder contains all Home Assistant configuration files for the SmartClock.
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `smart_clock.yaml` | HA Package — helpers (input_text, input_number, input_select) + all scripts |
-| `lovelace_card.yaml` | Lovelace dashboard card — paste directly into a manual card |
-
----
-
-## Setup
-
-### 1 — Install the Package
-
-Copy `smart_clock.yaml` into your HA packages folder, then reference it in `configuration.yaml`:
-
-```yaml
-homeassistant:
-  packages: !include_dir_named packages/
-```
-
-Restart Home Assistant.
-
-### 2 — Add the Dashboard Card
-
-1. Open your dashboard → **Edit** → **Add Card** → **Manual**
-2. Paste the full contents of `lovelace_card.yaml`
-3. Save
-
----
-
-## Helpers Created
-
-| Entity | Type | Purpose |
+| Topic (`<ns>` = `smart_clock` / `study_clock`) | Payload | Action |
 |---|---|---|
-| `input_text.smart_clock_message` | Text | Custom message to scroll on the display |
-| `input_number.smart_clock_display_duration` | Number (5–60 s) | How long to show a message |
-| `input_select.smart_clock_preset_messages` | Select | Quick-pick preset messages |
+| `<ns>/cmd/message` | string | scroll it (empty → back to clock) |
+| `<ns>/cmd/brightness` / `night_brightness` | `0`–`15` | day / night intensity |
+| `<ns>/cmd/night_dimming` / `format_12h` | `ON` / `OFF` | toggles |
+| `<ns>/cmd/message_repeats` | `1`–`5` | scroll count per message |
+| `<ns>/cmd/show_date` / `show_climate` / `reset` / `restart` | any | one‑shot actions |
+
+### Optional packages
+
+[`smart_clock.yaml`](smart_clock.yaml) / [`study_clock.yaml`](study_clock.yaml)
+add convenience scripts (push weather‑station / sensor values to the display,
+presets) and a "random quote every 5 min" automation. Drop in `packages/`,
+reference it in `configuration.yaml`, **restart HA**.
+
+[`lovelace_card.yaml`](lovelace_card.yaml) /
+[`StudyClock/lovelace_card.yaml`](StudyClock/lovelace_card.yaml) — Card 1 (main,
+no package needed) + a commented Card 2 for the package's quick‑message buttons.
 
 ---
 
-## Scripts
+## Adding a DHT22 to SmartClock
 
-| Script | Action |
-|---|---|
-| `script.smart_clock_show_message` | Scrolls the custom message on the display |
-| `script.smart_clock_show_preset` | Scrolls the selected preset |
-| `script.smart_clock_show_indoor_temp` | Shows indoor temperature from `sensor.bar_controller_bar_temperature` |
-| `script.smart_clock_show_outdoor_temp` | Shows outdoor temperature from `sensor.mini_weather_station_outdoor_temperature` |
-| `script.smart_clock_show_humidity` | Shows humidity from `sensor.oht_waterlevel_oht_humidity` |
-| `script.smart_clock_show_weather` | Shows weather summary from `sensor.mini_weather_station_weather_summary` |
-| `script.smart_clock_return_to_clock` | Resets display back to clock mode |
-| `script.smart_clock_set_brightness` | Sets brightness (0–15) via `brightness` field |
-| `script.smart_clock_sync_rtc` | Forces NTP → RTC sync on the device |
-
-> **Note:** Update the sensor entity IDs in `smart_clock.yaml` to match your own sensor names.
+Set `#define ENABLE_DHT 1`, wire the sensor to `DHT_PIN` (D2/GPIO4, with a 10k
+pull‑up), install the two Adafruit libraries, reflash. Temperature/Humidity
+sensors and a Show Climate button then appear in HA automatically.
 
 ---
-
-## MQTT Auto-Discovery Sensors
-
-The clock firmware publishes HA auto-discovery payloads on boot. These sensors will appear automatically:
-
-| Entity | Description |
-|---|---|
-| `sensor.smart_clock_rtc_status` | `OK` or `INVALID` |
-| `sensor.smart_clock_rtc_time` | Current time from DS3231 |
-| `sensor.smart_clock_rtc_date` | Current date from DS3231 |
-| `sensor.smart_clock_rtc_temperature` | DS3231 on-chip temperature (°C) |
-
----
-
-## Dashboard Card Layout
-
-```
-┌─────────────────────────────────────┐
-│  Smart Clock — Message              │
-│  [Custom Message input            ] │
-│  [Display Duration slider         ] │
-│  [Preset Messages dropdown        ] │
-├─────────────────────────────────────┤
-│  RTC Status                         │
-│  RTC Status | Time | Date | Temp    │
-│  [Sync RTC with NTP]                │
-├──────────────────┬──────────────────┤
-│ [Show Custom Msg]│ [Indoor Temp]    │
-│ [Show Preset   ] │ [Outdoor Temp]   │
-├──────────────────┴──────────────────┤
-│ [Humidity]       │ [Weather]        │
-├─────────────────────────────────────┤
-│  Clock Actions                      │
-│  [Return to Clock]                  │
-├─────────────────────────────────────┤
-│  Brightness Control                 │
-│  [Low]    [Medium]    [High]        │
-└─────────────────────────────────────┘
-```
 
 ## License
 
