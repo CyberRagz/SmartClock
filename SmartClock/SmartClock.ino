@@ -222,6 +222,9 @@ void savePrefs() {
    ===================================================================== */
 void startWiFi() {
   WiFi.mode(WIFI_STA);
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);   // modem sleep drops TCP SYN-ACKs -> rc=-2
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
   WiFi.hostname("smartclock");
 #if USE_STATIC_IP
   if (!WiFi.config(STATIC_IP, GATEWAY, SUBNET, DNS_1, DNS_2)) {
@@ -476,7 +479,8 @@ void mqttReconnect() {
     publishStates();
     publishTelemetry(true);
   } else {
-    Serial.printf("failed rc=%d\n", mqtt.state());
+    Serial.printf("failed rc=%d (rssi=%d)\n", mqtt.state(), WiFi.RSSI());
+    espClient.stop();   // release the socket so we don't leak lwIP handles
   }
 }
 
@@ -708,7 +712,8 @@ void setup() {
 
   mqtt.setServer(MQTT_SERVER, MQTT_PORT);
   mqtt.setCallback(mqttCallback);
-  mqtt.setSocketTimeout(2);
+  mqtt.setSocketTimeout(5);           // 2 s is too tight on a marginal link -> rc=-2
+  mqtt.setKeepAlive(30);
   mqtt.setBufferSize(768);            // HA discovery payloads exceed the 256 default
 
   tryNtpSync();
@@ -751,9 +756,9 @@ void loop() {
   static unsigned long lastBeat = 0;
   if (millis() - lastBeat >= 30000UL) {
     lastBeat = millis();
-    Serial.printf("[%lus] heap=%u state=%s wifi=%d mqtt=%d\n",
+    Serial.printf("[%lus] heap=%u state=%s wifi=%d rssi=%d mqtt=%d\n",
                   millis() / 1000, ESP.getFreeHeap(), displayName(),
-                  WiFi.status() == WL_CONNECTED, mqtt.connected());
+                  WiFi.status() == WL_CONNECTED, WiFi.RSSI(), mqtt.connected());
   }
 
   if (pendingRestart) {
