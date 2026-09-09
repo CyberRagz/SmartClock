@@ -2,6 +2,10 @@
 
 An ESP8266-based smart clock with a 6-panel MAX7219 LED matrix display, DS3231 RTC, NTP time synchronisation, MQTT integration, and Home Assistant auto-discovery.
 
+> **Second unit:** [`StudyClock/`](StudyClock/) is this sketch retargeted for a
+> 4-panel, no-RTC build (CS on D4, NTP-only, `study_clock/…` MQTT topics, its own
+> Home Assistant device). See [StudyClock/README.md](StudyClock/README.md).
+
 ---
 
 ## Features

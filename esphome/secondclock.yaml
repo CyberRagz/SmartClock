@@ -1,0 +1,240 @@
+# =============================================================================
+# SECOND / STUDY CLOCK  —  ESPHome  (complete, self-contained)
+# =============================================================================
+# Hardware (verified on this unit):
+#   NodeMCU / ESP8266
+#   4x MAX7219 (FC-16) matrix = 32x8 px   CLK->D5 (GPIO14)  DIN->D7 (GPIO13)  CS->D4 (GPIO2)
+#   No DS3231 detected  ->  NTP-only timekeeping
+#
+# Only Wi-Fi comes from secrets.yaml (wifi_ssid / wifi_password). Everything
+# else is inline below.
+#
+# Display: big HH:MM, tiny SS bottom-right (like the yuan910715 clock).
+# =============================================================================
+
+substitutions:
+  name: studyclock
+  friendly_name: "Study Clock"
+  timezone: "Asia/Kolkata"
+
+  # ---- Layout nudge knobs (pixel coords on the 32x8 canvas) ----
+  time_x: "0"
+  time_y: "0"
+  sec_x: "32"
+  sec_y: "8"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: "2024.8.0"
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: "id(matrix).set_intensity((uint8_t) id(brightness).state);"
+
+esp8266:
+  board: nodemcuv2
+  restore_from_flash: true
+
+preferences:
+  flash_write_interval: 60s
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: "pVnPl1fwKTIKna1EBDUme5pjZ3h4lDR5kEdgFZcEFbA="
+
+ota:
+  - platform: esphome
+    password: "studyclock-ota"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none
+  ap:
+    ssid: "${friendly_name} Setup"
+    password: "clocksetup"
+
+captive_portal:
+
+# ---------------------------------------------------------------------------
+# WEB UI  —  modern v3 card interface at  http://<device-ip>/
+# Assets stream from oi.esphome.io; web-OTA form and log buffer disabled to
+# keep the ESP8266 light. Drop to  version: 2  if it gets unstable.
+# ---------------------------------------------------------------------------
+web_server:
+  version: 3
+  port: 80
+  ota: false
+  log: false
+
+# ---------------------------------------------------------------------------
+# TIME  —  NTP only (no RTC on this unit)
+# ---------------------------------------------------------------------------
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: ${timezone}
+    servers:
+      - pool.ntp.org
+      - time.google.com
+      - time.cloudflare.com
+
+# ---------------------------------------------------------------------------
+# DISPLAY
+# ---------------------------------------------------------------------------
+spi:
+  clk_pin: GPIO14                    # D5
+  mosi_pin: GPIO13                   # D7
+
+font:
+  # Pixel-perfect bitmap fonts. TTF rasterisation is mush at 5-8 px; these BDF
+  # fonts render exactly as designed. Put both files in  esphome/fonts/
+  #   (HA add-on path: /config/esphome/fonts/) — see README for the download.
+  # 5x8  = classic X11 fixed font, fills the 8 px height exactly -> HH:MM
+  # tom-thumb (3x5) = smallest legible font -> seconds
+  - file: "fonts/5x8.bdf"
+    id: font_big
+  - file: "fonts/tom-thumb.bdf"
+    id: font_sec
+    glyphs: "0123456789"
+
+display:
+  - platform: max7219digit
+    id: matrix
+    cs_pin: GPIO2                    # D4
+    num_chips: 4
+    intensity: 6
+    scroll_enable: true             # messages auto-scroll only when they overflow
+    scroll_mode: STOP
+    scroll_speed: 200ms
+    scroll_dwell: 2000ms
+    scroll_delay: 3s
+    update_interval: 250ms
+    lambda: |-
+      // scrolling message overrides the clock
+      if (id(msg_active) && !id(msg_text).empty()) {
+        it.print(0, ${time_y}, id(font_big), id(msg_text).c_str());
+        return;
+      }
+
+      auto t = id(sntp_time).now();
+      if (!t.is_valid()) {
+        it.print(${time_x}, ${time_y}, id(font_big), "--:--");
+        return;
+      }
+
+      // big HH:MM (left), small SS (bottom-right corner)
+      it.strftime(${time_x}, ${time_y}, id(font_big), TextAlign::TOP_LEFT, "%H:%M", t);
+      it.strftime(${sec_x}, ${sec_y}, id(font_sec), TextAlign::BOTTOM_RIGHT, "%S", t);
+
+      // --- ALTERNATIVE: big HH:MM + seconds as a bottom progress bar ---
+      // If the small numeric seconds still look cramped, comment out the two
+      // strftime lines above and use these three instead:
+      //   it.strftime(${time_x}, ${time_y}, id(font_big), TextAlign::TOP_LEFT, "%H:%M", t);
+      //   int w = (t.second * 31) / 59;
+      //   it.line(0, 7, w, 7);
+
+# ---------------------------------------------------------------------------
+# STATE
+# ---------------------------------------------------------------------------
+globals:
+  - id: msg_text
+    type: std::string
+    restore_value: false
+  - id: msg_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+script:
+  - id: msg_expire
+    mode: restart
+    then:
+      - delay: !lambda "return (uint32_t) id(msg_secs).state * 1000;"
+      - lambda: "id(msg_active) = false;"
+
+# ---------------------------------------------------------------------------
+# ENTITIES  (Home Assistant + the web page)
+# ---------------------------------------------------------------------------
+text:
+  - platform: template
+    name: "Message"
+    id: msg_in
+    mode: text
+    optimistic: true
+    min_length: 0
+    max_length: 120
+    on_value:
+      then:
+        - lambda: |-
+            id(msg_text) = x;
+            id(msg_active) = !x.empty();
+        - if:
+            condition:
+              lambda: "return !x.empty();"
+            then:
+              - script.execute: msg_expire
+
+number:
+  - platform: template
+    name: "Brightness"
+    id: brightness
+    min_value: 0
+    max_value: 15
+    step: 1
+    initial_value: 6
+    mode: slider
+    restore_value: true
+    optimistic: true
+    set_action:
+      - lambda: "id(matrix).set_intensity((uint8_t) x);"
+
+  - platform: template
+    name: "Message Duration"
+    id: msg_secs
+    min_value: 5
+    max_value: 120
+    step: 5
+    initial_value: 15
+    unit_of_measurement: s
+    mode: box
+    restore_value: true
+    optimistic: true
+
+button:
+  - platform: template
+    name: "Show Clock"
+    icon: mdi:clock
+    on_press:
+      - lambda: "id(msg_active) = false;"
+
+  - platform: template
+    name: "Sync Time (NTP)"
+    icon: mdi:sync
+    on_press:
+      - lambda: "id(sntp_time).update();"
+
+  - platform: restart
+    name: "Restart"
+
+text_sensor:
+  - platform: template
+    name: "Date"
+    id: t_date
+    icon: mdi:calendar
+    update_interval: 60s
+    lambda: |-
+      auto t = id(sntp_time).now();
+      if (!t.is_valid()) return {"--"};
+      return {t.strftime("%a %d %b %Y")};
+
+sensor:
+  - platform: wifi_signal
+    name: "Wi-Fi Signal"
+    update_interval: 60s
+  - platform: uptime
+    name: "Uptime"

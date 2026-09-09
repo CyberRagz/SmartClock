@@ -1,0 +1,141 @@
+# =============================================================================
+# STUDY CLOCK - LOVELACE DASHBOARD CARD
+# =============================================================================
+# Add to a dashboard:
+#   Edit Dashboard -> "+" Add Card -> Manual -> paste from "type: vertical-stack".
+#
+# Uses the MQTT-discovered entities directly. The "Quick messages" section
+# needs the optional study_clock.yaml package (scripts + automation); delete
+# that section if you don't use it.
+#
+# Entity ids assume Home Assistant slugified them as study_clock_<name>. If HA
+# appended _2 to any of them (name collision), fix the ids below.
+# =============================================================================
+
+type: vertical-stack
+cards:
+
+  # ---------------------------------------------------------------------------
+  # Live readout
+  # ---------------------------------------------------------------------------
+  - type: markdown
+    content: >
+      # {{ states('sensor.study_clock_time') }}
+
+      **{{ states('sensor.study_clock_date') }}**  -  showing:
+      {{ states('sensor.study_clock_display') }}
+
+  # ---------------------------------------------------------------------------
+  # Message
+  # ---------------------------------------------------------------------------
+  - type: entities
+    title: Message
+    show_header_toggle: false
+    entities:
+      - entity: text.study_clock_message
+        name: Scroll text
+      - entity: number.study_clock_message_repeats
+        name: Repeat count
+
+  # ---------------------------------------------------------------------------
+  # Actions
+  # ---------------------------------------------------------------------------
+  - type: horizontal-stack
+    cards:
+      - type: button
+        name: Show Clock
+        icon: mdi:clock
+        tap_action: { action: toggle }
+        entity: button.study_clock_show_clock
+      - type: button
+        name: Show Date
+        icon: mdi:calendar
+        tap_action: { action: toggle }
+        entity: button.study_clock_show_date
+      - type: button
+        name: Restart
+        icon: mdi:restart
+        tap_action: { action: toggle }
+        entity: button.study_clock_restart
+
+  # ---------------------------------------------------------------------------
+  # Display settings
+  # ---------------------------------------------------------------------------
+  - type: entities
+    title: Display
+    show_header_toggle: false
+    entities:
+      - entity: number.study_clock_brightness
+        name: Brightness (day)
+      - entity: number.study_clock_night_brightness
+        name: Brightness (night)
+      - entity: switch.study_clock_night_dimming
+        name: Night dimming (22:00-07:00)
+      - entity: switch.study_clock_12_hour_format
+        name: 12-hour face
+
+  # ---------------------------------------------------------------------------
+  # Quick messages  --  needs study_clock.yaml package (delete if unused)
+  # ---------------------------------------------------------------------------
+  - type: grid
+    columns: 2
+    square: false
+    cards:
+      - type: button
+        name: Indoor Temp
+        icon: mdi:home-thermometer
+        tap_action:
+          action: perform-action
+          perform_action: script.study_clock_show_indoor_temp
+      - type: button
+        name: Outdoor Temp
+        icon: mdi:thermometer
+        tap_action:
+          action: perform-action
+          perform_action: script.study_clock_show_outdoor_temp
+      - type: button
+        name: Humidity
+        icon: mdi:water-percent
+        tap_action:
+          action: perform-action
+          perform_action: script.study_clock_show_humidity
+      - type: button
+        name: Weather
+        icon: mdi:weather-partly-cloudy
+        tap_action:
+          action: perform-action
+          perform_action: script.study_clock_show_weather
+      - type: button
+        name: Random Quote
+        icon: mdi:comment-quote
+        tap_action:
+          action: perform-action
+          perform_action: automation.trigger
+          target:
+            entity_id: automation.study_clock_random_quote
+      - type: button
+        name: Preset
+        icon: mdi:message-fast
+        tap_action:
+          action: perform-action
+          perform_action: script.study_clock_show_preset
+
+  # ---------------------------------------------------------------------------
+  # Diagnostics
+  # ---------------------------------------------------------------------------
+  - type: entities
+    title: Diagnostics
+    show_header_toggle: false
+    entities:
+      - entity: sensor.study_clock_wi_fi_signal
+        name: Wi-Fi signal
+      - entity: sensor.study_clock_ip_address
+        name: IP
+      - entity: sensor.study_clock_mac_address
+        name: MAC
+      - entity: sensor.study_clock_uptime
+        name: Uptime
+      - entity: sensor.study_clock_free_heap
+        name: Free heap
+      - entity: sensor.study_clock_wi_fi_reconnects
+        name: Wi-Fi reconnects
