@@ -94,31 +94,28 @@ script:
             {% if v in ['unknown', 'unavailable', 'none'] %}
             Humidity N/A
             {% else %}
-            Humidity {{ v | float | round(0) }} pct
+            Humidity {{ '%.0f' % (v | float) }} pct
             {% endif %}
 
   # --- Home Weather Station (ESPHome device "Home Weather Station") --------
-  # Entity ids are ESPHome's default slugs. Verify in Developer Tools -> States
-  # (filter "weather_station") and adjust if HA numbered any of them.
+  # Confirmed entity ids: sensor.home_weather_station_barometric_pressure,
+  # _pressure_trend (numeric hPa/3h), _ambient_light. CO2 / air-quality-rating
+  # slugs follow the same pattern - verify in Developer Tools -> States.
 
   study_clock_show_weather:
     alias: "Study Clock - Show Weather"
     icon: mdi:weather-partly-cloudy
     sequence:
       - variables:
-          trend: "{{ states('sensor.home_weather_station_weather_trend') }}"
-          p: "{{ states('sensor.home_weather_station_barometric_pressure') }}"
-          ptrend: "{{ states('sensor.home_weather_station_pressure_trend') }}"
+          p: "{{ states('sensor.home_weather_station_barometric_pressure') | float(0) }}"
+          d: "{{ states('sensor.home_weather_station_pressure_trend') | float(0) }}"
+      - variables:
+          label: "{% if d >= 1 %}Rising{% elif d <= -1 %}Falling{% else %}Steady{% endif %}"
       - action: mqtt.publish
         data:
           topic: "study_clock/cmd/message"
           payload: >-
-            {% if p in ['unknown', 'unavailable', 'none'] %}
-            Weather station offline
-            {% else %}
-            {{ trend if trend not in ['unknown','unavailable','none'] else ptrend }}
-            - {{ p | float | round(0) }} hPa
-            {% endif %}
+            {% if p == 0 %}Weather station offline{% else %}{{ '%.0f' % p }} hPa {{ label }} ({{ '%+.1f' % d }}/3h){% endif %}
 
   study_clock_show_air:
     alias: "Study Clock - Show Air Quality"
@@ -134,7 +131,7 @@ script:
             {% if co2 in ['unknown', 'unavailable', 'none'] %}
             Air quality N/A
             {% else %}
-            CO2 {{ co2 | float | round(0) }} ppm
+            CO2 {{ '%.0f' % (co2 | float) }} ppm
             {%- if rating not in ['unknown','unavailable','none'] %} - {{ rating }}{% endif %}
             {% endif %}
 
@@ -143,16 +140,14 @@ script:
     icon: mdi:brightness-5
     sequence:
       - variables:
-          lx: "{{ states('sensor.home_weather_station_ambient_light') }}"
+          lx: "{{ states('sensor.home_weather_station_ambient_light') | float(-1) }}"
       - action: mqtt.publish
         data:
           topic: "study_clock/cmd/message"
           payload: >-
-            {% if lx in ['unknown', 'unavailable', 'none'] %}
-            Light N/A
-            {% else %}
-            Light {{ lx | float | round(0) }} lx
-            {% endif %}
+            {% if lx < 0 %}Light N/A
+            {% elif lx >= 1000 %}Light {{ '%.1f' % (lx / 1000) }} klx
+            {% else %}Light {{ '%.0f' % lx }} lx{% endif %}
 
   # --- clock control -----------------------------------------------------
 
