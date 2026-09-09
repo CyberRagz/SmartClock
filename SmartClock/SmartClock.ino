@@ -117,8 +117,6 @@ static const char* MQTT_CLIENT_ID = "smart_clock";
 #define WIFI_TIMEOUT            20000UL
 #define WIFI_RECONNECT_INTERVAL 30000UL
 #define MQTT_RETRY_INTERVAL     5000UL
-#define NTP_RESYNC_INTERVAL     3600000UL   // 1 h once we have time
-#define NTP_RETRY_INTERVAL      30000UL     // while we don't
 #define TELEMETRY_FAST_INTERVAL 10000UL     // time / date / display state
 #define TELEMETRY_SLOW_INTERVAL 60000UL     // rssi / ip / diagnostics
 #define BRIGHTNESS_CHECK_INTERVAL 5000UL
@@ -169,7 +167,6 @@ unsigned long lastDhtRead     = 0 - DHT_READ_INTERVAL;
 unsigned long lastDhtOk       = 0;
 
 unsigned long lastBlink       = 0;
-unsigned long lastNtpAttempt  = 0 - NTP_RESYNC_INTERVAL;
 unsigned long lastDateScroll  = 0;
 char     clockShown[8]        = "";
 
@@ -276,9 +273,16 @@ bool haveValidTime() {
   return time(nullptr) > (time_t)MIN_VALID_EPOCH;
 }
 
+// configTime() must be called ONCE - it starts the SNTP client which then
+// retries on its own (~1 s until it syncs, then hourly). Calling it repeatedly
+// leaks a UDP socket each time; on the ESP8266's ~5 PCBs that exhausts the TCP
+// stack within minutes and kills the MQTT connection ("closed by client").
+bool ntpStarted = false;
 void tryNtpSync() {
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (ntpStarted || WiFi.status() != WL_CONNECTED) return;
   configTime(TZ_INFO, NTP_SERVER_1, NTP_SERVER_2, NTP_SERVER_3);
+  ntpStarted = true;
+  Serial.println("SNTP started");
 }
 
 void getClockText(char* buf, size_t len) {
@@ -778,6 +782,7 @@ void loop() {
       WiFi.disconnect();
       delay(200);
       startWiFi();
+      ntpStarted = false;   // re-start SNTP once WiFi is back
     }
     if (millis() - mqttDownSince > 300000UL) ESP.restart();
   } else {
@@ -788,14 +793,24 @@ void loop() {
   if (prefsDirty)    { prefsDirty = false; savePrefs(); }
   if (pendingStates) { pendingStates = false; applyBrightness(true); publishStates(); }
 
+  // log the exact moment MQTT drops
+  static bool wasMqtt = false;
+  bool nowMqtt = mqtt.connected();
+  if (wasMqtt && !nowMqtt)
+    Serial.printf(">>> MQTT LOST at %lus  state=%d heap=%u wifi=%d rssi=%d\n",
+                  millis() / 1000, mqtt.state(), ESP.getFreeHeap(),
+                  WiFi.status() == WL_CONNECTED, WiFi.RSSI());
+  wasMqtt = nowMqtt;
+
   // serial heartbeat - a healthy clock prints this every 30 s; if it stops,
   // the last line shows where it wedged
   static unsigned long lastBeat = 0;
   if (millis() - lastBeat >= 30000UL) {
     lastBeat = millis();
-    Serial.printf("[%lus] heap=%u state=%s wifi=%d rssi=%d mqtt=%d\n",
+    Serial.printf("[%lus] heap=%u state=%s wifi=%d rssi=%d mqtt=%d ntp=%d\n",
                   millis() / 1000, ESP.getFreeHeap(), displayName(),
-                  WiFi.status() == WL_CONNECTED, WiFi.RSSI(), mqtt.connected());
+                  WiFi.status() == WL_CONNECTED, WiFi.RSSI(), nowMqtt,
+                  haveValidTime());
   }
 
   if (pendingRestart) {
@@ -812,12 +827,7 @@ void loop() {
     applyBrightness(false);
   }
 
-  // NTP: retry fast until valid, then hourly
-  unsigned long ntpInterval = haveValidTime() ? NTP_RESYNC_INTERVAL : NTP_RETRY_INTERVAL;
-  if (millis() - lastNtpAttempt >= ntpInterval) {
-    lastNtpAttempt = millis();
-    tryNtpSync();
-  }
+  tryNtpSync();   // no-op after the first successful call (SNTP self-retries)
 
   // Command-driven transitions (kept out of the callback so display calls
   // don't run re-entrantly inside mqtt.loop())
