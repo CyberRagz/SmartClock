@@ -10,12 +10,24 @@ Arduino IDE.
 | Panels | 6× MAX7219 | **4× MAX7219** |
 | CS pin | D8 (GPIO15) | **D4 (GPIO2)** |
 | RTC | DS3231 (optional) | **none — NTP only, no I²C** |
+| Climate | DS3231 die temp | **DHT22 on D2** (temperature + humidity) |
 | Time source | RTClib + NTPClient | **ESP8266 `configTime()` / `<time.h>`** |
 | MQTT topics | `smart_clock/…` | **`study_clock/…`** |
 | HA device | "Smart Clock" | **"Study Clock"** (separate device) |
 | HA controls | needs `smart_clock.yaml` package | **self-contained** — Message / Brightness / buttons auto-discovered |
 
 CLK→D5 (GPIO14) and DIN→D7 (GPIO13) are unchanged.
+
+## Wiring
+
+| Signal | Pin |
+|---|---|
+| MAX7219 CLK | D5 (GPIO14) |
+| MAX7219 DIN | D7 (GPIO13) |
+| MAX7219 CS | D4 (GPIO2) |
+| **DHT22 DATA** | **D2 (GPIO4)** — 10k pull-up to 3V3 if the module has none |
+
+DHT22 also needs 3V3 + GND. Read every 30 s; values kept for 3 min if a read fails.
 
 ## Display
 
@@ -37,7 +49,7 @@ own NTP time so it works even if HA is down.
 Arduino IDE, ESP8266 core. Board: *NodeMCU 1.0 (ESP-12E Module)*.
 
 Libraries (Library Manager): **MD_Parola**, **MD_MAX72xx**, **ArduinoJson v6**,
-**PubSubClient**.
+**PubSubClient**, **DHT sensor library** (Adafruit) + **Adafruit Unified Sensor**.
 
 ```
 cp StudyClock/secrets_example.h StudyClock/secrets.h   # then edit
@@ -64,6 +76,7 @@ Telemetry (retained):
 | `study_clock/night_dimming` / `format_12h` | `ON` / `OFF` |
 | `study_clock/message_repeats` | `1`–`5` |
 | `study_clock/message` | current message |
+| `study_clock/temperature` / `humidity` | DHT22 (`unknown` if the sensor is out) |
 
 Commands:
 
@@ -77,17 +90,18 @@ Commands:
 | `study_clock/cmd/message_repeats` | `1`–`5` | how many times a message scrolls |
 | `study_clock/cmd/reset` | any | return to clock |
 | `study_clock/cmd/show_date` | any | scroll the date now |
+| `study_clock/cmd/show_climate` | any | scroll `24.5C  55%` from the DHT22 |
 | `study_clock/cmd/restart` | any | reboot the ESP |
 
 ## Home Assistant
 
 Auto-discovered under one **Study Clock** device:
 
-- **Sensors:** Time, Date, Display; *diagnostic:* Wi-Fi Signal, IP, MAC, Free Heap,
-  Uptime, Wi-Fi Reconnects
+- **Sensors:** Time, Date, Display, **Temperature, Humidity** (DHT22);
+  *diagnostic:* Wi-Fi Signal, IP, MAC, Free Heap, Uptime, Wi-Fi Reconnects
 - **Controls:** Message (text), Brightness (slider); *config:* Night Brightness,
   Message Repeats, Night Dimming (switch), 12 Hour Format (switch)
-- **Buttons:** Show Clock, Show Date, Restart
+- **Buttons:** Show Clock, Show Date, **Show Climate**, Restart
 
 No YAML packages needed. `study_clock.yaml` in the repo root adds optional
 convenience scripts (push a sensor value to the display, random-quote automation).

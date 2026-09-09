@@ -68,23 +68,18 @@ script:
           payload: "{{ states('input_select.study_clock_presets') }}"
 
   # --- sensor read-outs --------------------------------------------------
-  # Replace the sensor entity_ids with your own.
+  # Indoor climate now comes from the clock's own DHT22 - the firmware has a
+  # built-in "Show Climate" button (button.study_clock_show_climate) that
+  # scrolls "24.5C  55%" directly. This script is the same thing via HA.
+  # Replace the outdoor / weather entity_ids with your own.
 
-  study_clock_show_indoor_temp:
-    alias: "Study Clock - Show Indoor Temperature"
-    icon: mdi:thermometer
+  study_clock_show_indoor_climate:
+    alias: "Study Clock - Show Indoor Climate"
+    icon: mdi:home-thermometer
     sequence:
-      - variables:
-          v: "{{ states('sensor.presence_bedroom_temperature') }}"
-      - action: mqtt.publish
-        data:
-          topic: "study_clock/cmd/message"
-          payload: >-
-            {% if v in ['unknown', 'unavailable', 'none'] %}
-            Indoor N/A
-            {% else %}
-            Indoor {{ v | float | round(1) }}C
-            {% endif %}
+      - action: button.press
+        target:
+          entity_id: button.study_clock_show_climate
 
   study_clock_show_outdoor_temp:
     alias: "Study Clock - Show Outdoor Temperature"
@@ -107,7 +102,7 @@ script:
     icon: mdi:water-percent
     sequence:
       - variables:
-          v: "{{ states('sensor.oht_waterlevel_oht_humidity') }}"
+          v: "{{ states('sensor.study_clock_humidity') }}"
       - action: mqtt.publish
         data:
           topic: "study_clock/cmd/message"

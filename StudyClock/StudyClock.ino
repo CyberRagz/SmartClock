@@ -24,6 +24,7 @@
 #include <PubSubClient.h>
 #include <ArduinoOTA.h>
 #include <EEPROM.h>
+#include <DHT.h>            // "DHT sensor library" by Adafruit (+ "Adafruit Unified Sensor")
 #include <time.h>
 #include "secrets.h"
 
@@ -34,6 +35,13 @@
 #define DATA_PIN      13   // D7
 #define CS_PIN        2    // D4
 #define PANEL_COLS    (MAX_DEVICES * 8)
+
+// DHT22 (AM2302) on D2. Needs a 10k pull-up from DATA to 3V3 if your module
+// doesn't already have one on board.
+#define DHT_PIN       4    // D2
+#define DHT_TYPE      DHT22
+#define DHT_READ_INTERVAL 30000UL   // DHT22 min interval is 2 s; 30 s is plenty
+#define DHT_STALE_AFTER   180000UL  // mark unavailable after 3 min of failed reads
 
 /* ---------------- STATIC IP ---------------- */
 // Set USE_STATIC_IP to 0 to fall back to DHCP.
@@ -81,6 +89,8 @@ static const char* MQTT_CLIENT_ID = "study_clock";
 #define T_12H_ST      "study_clock/format_12h"
 #define T_REPEATS_ST  "study_clock/message_repeats"
 #define T_MSG_ST      "study_clock/message"
+#define T_TEMP        "study_clock/temperature"
+#define T_HUM         "study_clock/humidity"
 
 #define T_CMD_MESSAGE    "study_clock/cmd/message"
 #define T_CMD_BRIGHTNESS "study_clock/cmd/brightness"
@@ -88,9 +98,10 @@ static const char* MQTT_CLIENT_ID = "study_clock";
 #define T_CMD_NIGHT_DIM  "study_clock/cmd/night_dimming"
 #define T_CMD_12H        "study_clock/cmd/format_12h"
 #define T_CMD_REPEATS    "study_clock/cmd/message_repeats"
-#define T_CMD_RESET      "study_clock/cmd/reset"       // -> back to clock
-#define T_CMD_SHOW_DATE  "study_clock/cmd/show_date"
-#define T_CMD_RESTART    "study_clock/cmd/restart"
+#define T_CMD_RESET        "study_clock/cmd/reset"       // -> back to clock
+#define T_CMD_SHOW_DATE    "study_clock/cmd/show_date"
+#define T_CMD_SHOW_CLIMATE "study_clock/cmd/show_climate"
+#define T_CMD_RESTART      "study_clock/cmd/restart"
 
 /* ---------------- INTERVALS ---------------- */
 #define WIFI_TIMEOUT            20000UL
@@ -109,6 +120,7 @@ static const char* MQTT_CLIENT_ID = "study_clock";
 MD_Parola    display = MD_Parola(HARDWARE_TYPE, DATA_PIN, CLK_PIN, CS_PIN, MAX_DEVICES);
 WiFiClient   espClient;
 PubSubClient mqtt(espClient);
+DHT          dht(DHT_PIN, DHT_TYPE);
 
 /* ---------------- STATE ---------------- */
 enum DisplayState { SHOW_BOOT, SHOW_IP, SHOW_MESSAGE, SHOW_CLOCK_ENTRY, SHOW_CLOCK_RUN, SHOW_DATE };
@@ -129,8 +141,16 @@ bool     colonOn              = false;
 volatile bool otaActive       = false;
 bool     pendingMessage       = false;
 bool     pendingDate          = false;
+bool     pendingClimate       = false;
 bool     pendingRestart       = false;
 unsigned long wifiReconnects  = 0;
+
+// DHT22
+float    dhtTemp              = NAN;
+float    dhtHum               = NAN;
+bool     dhtValid             = false;
+unsigned long lastDhtRead     = 0 - DHT_READ_INTERVAL;   // read on first loop
+unsigned long lastDhtOk       = 0;
 
 unsigned long lastBlink       = 0;
 unsigned long lastNtpAttempt  = 0 - NTP_RESYNC_INTERVAL;
@@ -143,6 +163,8 @@ bool haveValidTime();
 void getClockText(char* buf, size_t len);
 void getTimeText(char* buf, size_t len);
 void getDateText(char* buf, size_t len);
+void getClimateText(char* buf, size_t len);
+void readDht();
 void startScroll(const char* text, uint16_t pause);
 bool scrollDone();
 void showStatic(const char* text);
@@ -274,6 +296,31 @@ void getDateText(char* buf, size_t len) {
 }
 
 /* =====================================================================
+   DHT22  (temperature + humidity)
+   ===================================================================== */
+void readDht() {
+  if (millis() - lastDhtRead < DHT_READ_INTERVAL) return;
+  lastDhtRead = millis();
+
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();          // Celsius
+
+  if (!isnan(h) && !isnan(t) && t > -40 && t < 85) {
+    dhtHum = h;
+    dhtTemp = t;
+    dhtValid = true;
+    lastDhtOk = millis();
+  } else if (millis() - lastDhtOk > DHT_STALE_AFTER) {
+    dhtValid = false;                        // keep last values but flag unavailable
+  }
+}
+
+void getClimateText(char* buf, size_t len) {
+  if (!dhtValid) { strncpy(buf, "CLIMATE N/A", len); return; }
+  snprintf(buf, len, "%.1fC  %.0f%%", dhtTemp, dhtHum);
+}
+
+/* =====================================================================
    BRIGHTNESS  (with night dimming)
    ===================================================================== */
 int effectiveBrightness() {
@@ -374,6 +421,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   else if (!strcmp(topic, T_CMD_SHOW_DATE)) {
     pendingDate = true;
   }
+  else if (!strcmp(topic, T_CMD_SHOW_CLIMATE)) {
+    pendingClimate = true;
+  }
   else if (!strcmp(topic, T_CMD_RESTART)) {
     pendingRestart = true;
   }
@@ -400,6 +450,7 @@ void mqttReconnect() {
     mqtt.subscribe(T_CMD_REPEATS);
     mqtt.subscribe(T_CMD_RESET);
     mqtt.subscribe(T_CMD_SHOW_DATE);
+    mqtt.subscribe(T_CMD_SHOW_CLIMATE);
     mqtt.subscribe(T_CMD_RESTART);
 
     mqtt.publish(T_MAC, WiFi.macAddress().c_str(), true);
@@ -447,6 +498,15 @@ void publishDiscovery() {
 
   discovery("sensor", "display", "Display", [](JsonDocument& d){
     d["state_topic"] = T_DISP; d["icon"] = "mdi:television-guide"; });
+
+  discovery("sensor", "temperature", "Temperature", [](JsonDocument& d){
+    d["state_topic"] = T_TEMP; d["device_class"] = "temperature";
+    d["unit_of_measurement"] = "\xC2\xB0" "C";   // UTF-8 degree sign, ASCII source
+    d["state_class"] = "measurement"; });
+
+  discovery("sensor", "humidity", "Humidity", [](JsonDocument& d){
+    d["state_topic"] = T_HUM; d["device_class"] = "humidity";
+    d["unit_of_measurement"] = "%"; d["state_class"] = "measurement"; });
 
   discovery("sensor", "rssi", "Wi-Fi Signal", [](JsonDocument& d){
     d["state_topic"] = T_RSSI; d["device_class"] = "signal_strength";
@@ -512,6 +572,10 @@ void publishDiscovery() {
     d["command_topic"] = T_CMD_SHOW_DATE; d["payload_press"] = "1";
     d["icon"] = "mdi:calendar"; });
 
+  discovery("button", "show_climate", "Show Climate", [](JsonDocument& d){
+    d["command_topic"] = T_CMD_SHOW_CLIMATE; d["payload_press"] = "1";
+    d["icon"] = "mdi:home-thermometer"; });
+
   discovery("button", "restart", "Restart", [](JsonDocument& d){
     d["command_topic"] = T_CMD_RESTART; d["payload_press"] = "1";
     d["device_class"] = "restart"; d["entity_category"] = "config"; });
@@ -561,6 +625,14 @@ void publishTelemetry(bool force) {
     snprintf(buf, sizeof(buf), "%lu", millis() / 1000);   mqtt.publish(T_UPTIME, buf, true);
     snprintf(buf, sizeof(buf), "%lu", wifiReconnects);    mqtt.publish(T_RECONNECTS, buf, true);
     mqtt.publish(T_IP, WiFi.localIP().toString().c_str(), true);
+
+    if (dhtValid) {
+      snprintf(buf, sizeof(buf), "%.1f", dhtTemp);  mqtt.publish(T_TEMP, buf, true);
+      snprintf(buf, sizeof(buf), "%.1f", dhtHum);   mqtt.publish(T_HUM, buf, true);
+    } else {
+      mqtt.publish(T_TEMP, "unknown", true);
+      mqtt.publish(T_HUM, "unknown", true);
+    }
   }
 }
 
@@ -601,6 +673,8 @@ void setup() {
   display.setIntensity(brightness);
   display.displayClear();
 
+  dht.begin();
+
   connectWiFi();
   setupOTA();
 
@@ -627,6 +701,7 @@ void loop() {
   ensureWiFi();
   mqttReconnect();
   mqtt.loop();
+  readDht();
   publishTelemetry(false);
 
   if (pendingRestart) {
@@ -664,6 +739,11 @@ void loop() {
     getDateText(scrollBuf, sizeof(scrollBuf));
     startScroll(scrollBuf, 1500);
     state = SHOW_DATE;
+  } else if (pendingClimate && state == SHOW_CLOCK_RUN) {
+    pendingClimate = false;
+    getClimateText(scrollBuf, sizeof(scrollBuf));
+    startScroll(scrollBuf, 1500);
+    state = SHOW_DATE;              // same "scroll then back to clock" handling
   }
 
   switch (state) {
