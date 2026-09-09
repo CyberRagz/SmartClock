@@ -25,6 +25,9 @@ cards:
       **{{ states('sensor.study_clock_date') }}**  -  showing:
       {{ states('sensor.study_clock_display') }}
 
+      {{ states('sensor.study_clock_temperature') }} °C  ·
+      {{ states('sensor.study_clock_humidity') }} %
+
   # ---------------------------------------------------------------------------
   # Message
   # ---------------------------------------------------------------------------
@@ -43,15 +46,20 @@ cards:
   - type: horizontal-stack
     cards:
       - type: button
-        name: Show Clock
+        name: Clock
         icon: mdi:clock
         tap_action: { action: toggle }
         entity: button.study_clock_show_clock
       - type: button
-        name: Show Date
+        name: Date
         icon: mdi:calendar
         tap_action: { action: toggle }
         entity: button.study_clock_show_date
+      - type: button
+        name: Climate
+        icon: mdi:home-thermometer
+        tap_action: { action: toggle }
+        entity: button.study_clock_show_climate
       - type: button
         name: Restart
         icon: mdi:restart
@@ -82,23 +90,16 @@ cards:
     square: false
     cards:
       - type: button
-        name: Indoor Temp
+        name: Climate
         icon: mdi:home-thermometer
-        tap_action:
-          action: perform-action
-          perform_action: script.study_clock_show_indoor_temp
+        tap_action: { action: toggle }
+        entity: button.study_clock_show_climate
       - type: button
         name: Outdoor Temp
         icon: mdi:thermometer
         tap_action:
           action: perform-action
           perform_action: script.study_clock_show_outdoor_temp
-      - type: button
-        name: Humidity
-        icon: mdi:water-percent
-        tap_action:
-          action: perform-action
-          perform_action: script.study_clock_show_humidity
       - type: button
         name: Weather
         icon: mdi:weather-partly-cloudy
