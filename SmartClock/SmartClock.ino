@@ -148,10 +148,14 @@ int      msgRepeats           = DEFAULT_MSG_REPEATS;
 
 bool     colonOn              = false;
 volatile bool otaActive       = false;
+volatile unsigned long otaHeartbeat = 0;   // last OTA activity; stall -> reboot
+unsigned long lastClockRun    = 0;         // last time we reached SHOW_CLOCK_RUN
 bool     pendingMessage       = false;
 bool     pendingDate          = false;
 bool     pendingClimate       = false;
 bool     pendingRestart       = false;
+bool     pendingStates        = false;   // publish state topics from loop()
+bool     prefsDirty           = false;   // savePrefs() from loop()
 unsigned long wifiReconnects  = 0;
 
 // DHT22 (unused unless ENABLE_DHT)
@@ -376,6 +380,9 @@ void showStatic(const char* text) {
 /* =====================================================================
    MQTT
    ===================================================================== */
+// The callback runs INSIDE mqtt.loop(). PubSubClient is not re-entrant and
+// EEPROM.commit() blocks the flash - so this only mutates globals and raises
+// flags; loop() does the publishing / saving / display work.
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   if (length > 100) length = 100;
   char msg[101];
@@ -384,46 +391,43 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
   if (!strcmp(topic, T_CMD_MESSAGE)) {
     customMessage = msg;
-    mqtt.publish(T_MSG_ST, msg, true);
     if (customMessage.length() > 0) pendingMessage = true;
     else                            state = SHOW_CLOCK_ENTRY;
+    pendingStates = true;
   }
   else if (!strcmp(topic, T_CMD_BRIGHTNESS)) {
     char* end; long v = strtol(msg, &end, 10);
     if (end != msg) {
       int nv = constrain((int)v, 0, 15);
-      if (nv != brightness) { brightness = nv; savePrefs(); }
-      applyBrightness(true);
-      publishStates();
+      if (nv != brightness) { brightness = nv; prefsDirty = true; }
+      pendingStates = true;
     }
   }
   else if (!strcmp(topic, T_CMD_NIGHT_BR)) {
     char* end; long v = strtol(msg, &end, 10);
     if (end != msg) {
       int nv = constrain((int)v, 0, 15);
-      if (nv != nightBrightness) { nightBrightness = nv; savePrefs(); }
-      applyBrightness(true);
-      publishStates();
+      if (nv != nightBrightness) { nightBrightness = nv; prefsDirty = true; }
+      pendingStates = true;
     }
   }
   else if (!strcmp(topic, T_CMD_NIGHT_DIM)) {
     bool nv = !strcmp(msg, "ON");
-    if (nv != nightDimming) { nightDimming = nv; savePrefs(); }
-    applyBrightness(true);
-    publishStates();
+    if (nv != nightDimming) { nightDimming = nv; prefsDirty = true; }
+    pendingStates = true;
   }
   else if (!strcmp(topic, T_CMD_12H)) {
     bool nv = !strcmp(msg, "ON");
-    if (nv != use12h) { use12h = nv; savePrefs(); }
+    if (nv != use12h) { use12h = nv; prefsDirty = true; }
     clockShown[0] = '\0';
-    publishStates();
+    pendingStates = true;
   }
   else if (!strcmp(topic, T_CMD_REPEATS)) {
     char* end; long v = strtol(msg, &end, 10);
     if (end != msg) {
       int nv = constrain((int)v, 1, 5);
-      if (nv != msgRepeats) { msgRepeats = nv; savePrefs(); }
-      publishStates();
+      if (nv != msgRepeats) { msgRepeats = nv; prefsDirty = true; }
+      pendingStates = true;
     }
   }
   else if (!strcmp(topic, T_CMD_RESET)) {
@@ -664,9 +668,10 @@ void setupOTA() {
   ArduinoOTA.setHostname("smartclock");
   ArduinoOTA.setPassword(OTA_PASSWORD);
 
-  ArduinoOTA.onStart([]() { otaActive = true; showStatic("ota"); });
+  ArduinoOTA.onStart([]() { otaActive = true; otaHeartbeat = millis(); showStatic("ota"); });
 
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    otaHeartbeat = millis();
     if (total == 0) return;
     MD_MAX72XX* mx = display.getGraphicObject();
     int filled = (int)((uint32_t)progress * PANEL_COLS / total);
@@ -719,13 +724,37 @@ void setup() {
    ===================================================================== */
 void loop() {
   ArduinoOTA.handle();
-  if (otaActive) return;
+  if (otaActive) {
+    // A stalled OTA (started, then the TCP link dropped without onEnd/onError)
+    // would otherwise wedge the device forever while still answering pings.
+    if (millis() - otaHeartbeat > 90000UL) ESP.restart();
+    return;
+  }
+
+  // Software watchdog: if we booted, connected, but haven't shown the running
+  // clock for 15 min, something upstream is stuck - reboot.
+  if (state == SHOW_CLOCK_RUN) lastClockRun = millis();
+  if (lastClockRun != 0 && millis() - lastClockRun > 900000UL) ESP.restart();
 
   ensureWiFi();
   mqttReconnect();
   mqtt.loop();
   readDht();
   publishTelemetry(false);
+
+  // deferred work raised by the MQTT callback
+  if (prefsDirty)    { prefsDirty = false; savePrefs(); }
+  if (pendingStates) { pendingStates = false; applyBrightness(true); publishStates(); }
+
+  // serial heartbeat - a healthy clock prints this every 30 s; if it stops,
+  // the last line shows where it wedged
+  static unsigned long lastBeat = 0;
+  if (millis() - lastBeat >= 30000UL) {
+    lastBeat = millis();
+    Serial.printf("[%lus] heap=%u state=%s wifi=%d mqtt=%d\n",
+                  millis() / 1000, ESP.getFreeHeap(), displayName(),
+                  WiFi.status() == WL_CONNECTED, mqtt.connected());
+  }
 
   if (pendingRestart) {
     mqtt.publish(T_AVAIL, "offline", true);
