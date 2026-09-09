@@ -95,17 +95,23 @@ cards:
         tap_action: { action: toggle }
         entity: button.study_clock_show_climate
       - type: button
-        name: Outdoor Temp
-        icon: mdi:thermometer
-        tap_action:
-          action: perform-action
-          perform_action: script.study_clock_show_outdoor_temp
-      - type: button
         name: Weather
         icon: mdi:weather-partly-cloudy
         tap_action:
           action: perform-action
           perform_action: script.study_clock_show_weather
+      - type: button
+        name: Air / CO2
+        icon: mdi:molecule-co2
+        tap_action:
+          action: perform-action
+          perform_action: script.study_clock_show_air
+      - type: button
+        name: Light
+        icon: mdi:brightness-5
+        tap_action:
+          action: perform-action
+          perform_action: script.study_clock_show_light
       - type: button
         name: Random Quote
         icon: mdi:comment-quote
