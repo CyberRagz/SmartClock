@@ -1,31 +1,29 @@
 # =============================================================================
-# SMART CLOCK - LOVELACE DASHBOARD CARDS
+# SMART CLOCK - LOVELACE DASHBOARD CARD
 # =============================================================================
-# This file has TWO cards:
+# One card. Dashboard -> Edit -> + Add Card -> Manual -> paste from
+# "type: vertical-stack".
 #
-#   CARD 1 (below, "type: vertical-stack") - the main card. Runs entirely on
-#           the MQTT-discovered entities. Paste it as a Manual card.
-#
-#   CARD 2 (near the bottom, "type: grid") - optional "quick messages". Needs
-#           the smart_clock.yaml package loaded (HA restart required).
-#           Paste it as a SECOND Manual card only after the package is in.
+# The "Quick messages" grid needs the smart_clock.yaml package loaded
+# (HA restart). Delete that section if you don't use the package - the rest
+# runs on the MQTT-discovered entities alone.
 #
 # Entity ids assume HA slugified the device as smart_clock_<name>. If HA
 # appended _2 to any (name collision), fix the ids here.
 # =============================================================================
 
-
-# ===== CARD 1 - main (no package needed) =====================================
 type: vertical-stack
 cards:
 
+  # -- live readout --------------------------------------------------------
   - type: markdown
     content: >
       # {{ states('sensor.smart_clock_time') }}
 
-      **{{ states('sensor.smart_clock_date') }}**  -  showing:
+      **{{ states('sensor.smart_clock_date') }}**  ·  showing
       {{ states('sensor.smart_clock_display') }}
 
+  # -- message -----------------------------------------------------------
   - type: entities
     title: Message
     show_header_toggle: false
@@ -35,6 +33,7 @@ cards:
       - entity: number.smart_clock_message_repeats
         name: Repeat count
 
+  # -- one-shot actions -------------------------------------------------
   - type: horizontal-stack
     cards:
       - type: button
@@ -53,6 +52,7 @@ cards:
         tap_action: { action: toggle }
         entity: button.smart_clock_restart
 
+  # -- display settings ------------------------------------------------
   - type: entities
     title: Display
     show_header_toggle: false
@@ -66,6 +66,51 @@ cards:
       - entity: switch.smart_clock_12_hour_format
         name: 12-hour face
 
+  # -- quick messages (needs smart_clock.yaml package) ----------------
+  - type: grid
+    columns: 2
+    square: false
+    cards:
+      - type: button
+        name: Weather
+        icon: mdi:weather-partly-cloudy
+        tap_action:
+          action: perform-action
+          perform_action: script.smart_clock_show_weather
+      - type: button
+        name: Air / CO2
+        icon: mdi:molecule-co2
+        tap_action:
+          action: perform-action
+          perform_action: script.smart_clock_show_air
+      - type: button
+        name: Light
+        icon: mdi:brightness-5
+        tap_action:
+          action: perform-action
+          perform_action: script.smart_clock_show_light
+      - type: button
+        name: Preset
+        icon: mdi:message-fast
+        tap_action:
+          action: perform-action
+          perform_action: script.smart_clock_show_preset
+      - type: button
+        name: Random Quote
+        icon: mdi:comment-quote
+        tap_action:
+          action: perform-action
+          perform_action: automation.trigger
+          target:
+            entity_id: automation.smart_clock_random_quote
+      - type: button
+        name: Date scroll
+        icon: mdi:calendar-clock
+        tap_action:
+          action: perform-action
+          perform_action: script.smart_clock_show_date
+
+  # -- diagnostics ---------------------------------------------------
   - type: entities
     title: Diagnostics
     show_header_toggle: false
@@ -82,45 +127,3 @@ cards:
         name: Free heap
       - entity: sensor.smart_clock_wi_fi_reconnects
         name: Wi-Fi reconnects
-
-
-# ===== CARD 2 - optional quick messages (needs smart_clock.yaml) ============
-# Paste separately as a second Manual card, AFTER the package is loaded and
-# HA restarted. Until then these buttons show "action not found".
-#
-# type: grid
-# columns: 2
-# square: false
-# cards:
-#   - type: button
-#     name: Weather
-#     icon: mdi:weather-partly-cloudy
-#     tap_action:
-#       action: perform-action
-#       perform_action: script.smart_clock_show_weather
-#   - type: button
-#     name: Air / CO2
-#     icon: mdi:molecule-co2
-#     tap_action:
-#       action: perform-action
-#       perform_action: script.smart_clock_show_air
-#   - type: button
-#     name: Light
-#     icon: mdi:brightness-5
-#     tap_action:
-#       action: perform-action
-#       perform_action: script.smart_clock_show_light
-#   - type: button
-#     name: Random Quote
-#     icon: mdi:comment-quote
-#     tap_action:
-#       action: perform-action
-#       perform_action: automation.trigger
-#       target:
-#         entity_id: automation.smart_clock_random_quote
-#   - type: button
-#     name: Preset
-#     icon: mdi:message-fast
-#     tap_action:
-#       action: perform-action
-#       perform_action: script.smart_clock_show_preset
