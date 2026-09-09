@@ -1,0 +1,109 @@
+# =============================================================================
+# CLIMATE DASHBOARD - indoor (2 floors) vs outdoor, temperature + humidity
+# =============================================================================
+# Built-in cards only (no HACS). Paste as one "Manual" card.
+#
+# Entity ids confirmed live 2026-09-09:
+#   Lounge  temp : sensor.insitu_lounge_bar_controller_insitu_indoor_temperature
+#   Lounge  hum  : sensor.insitu_lounge_bar_controller_insitu_indoor_humidity
+#   Study   temp : sensor.study_clock_temperature
+#   Study   hum  : sensor.study_clock_humidity
+#   Outdoor temp : sensor.watertank_oht_sensor_outdoor_temperature
+#   Outdoor hum  : sensor.watertank_oht_sensor_outdoor_humidity
+#
+# Rename "Lounge" / "Study" below to your actual floor names.
+# History / statistics graphs fill in as HA records data under these ids.
+# =============================================================================
+
+type: vertical-stack
+cards:
+
+  # --- Current readings -------------------------------------------------
+  - type: glance
+    title: Indoor floors vs Outdoor
+    columns: 3
+    state_color: false
+    entities:
+      - entity: sensor.insitu_lounge_bar_controller_insitu_indoor_temperature
+        name: Lounge temp
+      - entity: sensor.study_clock_temperature
+        name: Study temp
+      - entity: sensor.watertank_oht_sensor_outdoor_temperature
+        name: Outdoor temp
+      - entity: sensor.insitu_lounge_bar_controller_insitu_indoor_humidity
+        name: Lounge hum
+      - entity: sensor.study_clock_humidity
+        name: Study hum
+      - entity: sensor.watertank_oht_sensor_outdoor_humidity
+        name: Outdoor hum
+
+  # --- Comparison -----------------------------------------------------
+  - type: markdown
+    content: |
+      {%- set lt = states('sensor.insitu_lounge_bar_controller_insitu_indoor_temperature') | float(none) -%}
+      {%- set stt = states('sensor.study_clock_temperature') | float(none) -%}
+      {%- set ot = states('sensor.watertank_oht_sensor_outdoor_temperature') | float(none) -%}
+      {%- set lh = states('sensor.insitu_lounge_bar_controller_insitu_indoor_humidity') | float(none) -%}
+      {%- set sh = states('sensor.study_clock_humidity') | float(none) -%}
+      {%- set oh = states('sensor.watertank_oht_sensor_outdoor_humidity') | float(none) -%}
+      {%- set tt = ['| Where | °C | vs Outdoor |', '|---|---:|---:|'] -%}
+      {%- if lt is not none -%}{%- set tt = tt + ['| Lounge | ' ~ (lt|round(1)) ~ ' | ' ~ ('%+.1f' % ((lt-ot)|round(1)) if ot is not none else '—') ~ ' |'] -%}{%- endif -%}
+      {%- if stt is not none -%}{%- set tt = tt + ['| Study | ' ~ (stt|round(1)) ~ ' | ' ~ ('%+.1f' % ((stt-ot)|round(1)) if ot is not none else '—') ~ ' |'] -%}{%- endif -%}
+      {%- if ot is not none -%}{%- set tt = tt + ['| Outdoor | ' ~ (ot|round(1)) ~ ' | — |'] -%}{%- endif -%}
+      {%- set ht = ['| Where | % | vs Outdoor |', '|---|---:|---:|'] -%}
+      {%- if lh is not none -%}{%- set ht = ht + ['| Lounge | ' ~ (lh|round(0)|int) ~ ' | ' ~ ('%+.0f' % ((lh-oh)|round(0)) if oh is not none else '—') ~ ' |'] -%}{%- endif -%}
+      {%- if sh is not none -%}{%- set ht = ht + ['| Study | ' ~ (sh|round(0)|int) ~ ' | ' ~ ('%+.0f' % ((sh-oh)|round(0)) if oh is not none else '—') ~ ' |'] -%}{%- endif -%}
+      {%- if oh is not none -%}{%- set ht = ht + ['| Outdoor | ' ~ (oh|round(0)|int) ~ ' | — |'] -%}{%- endif -%}
+      ### Temperature
+
+      {{ tt | join('\n') }}
+
+      {% if lt is not none and stt is not none -%}
+      **Floor-to-floor Δ: {{ (lt - stt) | round(1) }} °C** ({{ 'Lounge warmer' if lt > stt else 'Study warmer' if stt > lt else 'equal' }})
+      {%- endif %}
+
+      ### Humidity
+
+      {{ ht | join('\n') }}
+
+  # --- Temperature over time -----------------------------------------
+  - type: history-graph
+    title: Temperature - last 24 h
+    hours_to_show: 24
+    refresh_interval: 60
+    entities:
+      - entity: sensor.insitu_lounge_bar_controller_insitu_indoor_temperature
+        name: Lounge
+      - entity: sensor.study_clock_temperature
+        name: Study
+      - entity: sensor.watertank_oht_sensor_outdoor_temperature
+        name: Outdoor
+
+  # --- Humidity over time ------------------------------------------
+  - type: history-graph
+    title: Humidity - last 24 h
+    hours_to_show: 24
+    refresh_interval: 60
+    entities:
+      - entity: sensor.insitu_lounge_bar_controller_insitu_indoor_humidity
+        name: Lounge
+      - entity: sensor.study_clock_humidity
+        name: Study
+      - entity: sensor.watertank_oht_sensor_outdoor_humidity
+        name: Outdoor
+
+  # --- Variation band: hourly min / mean / max, 7 days -------------
+  - type: statistics-graph
+    title: Temperature variation (hourly min / mean / max, 7 d)
+    period: hour
+    days_to_show: 7
+    chart_type: line
+    stat_types:
+      - min
+      - mean
+      - max
+    entities:
+      - sensor.insitu_lounge_bar_controller_insitu_indoor_temperature
+      - sensor.study_clock_temperature
+      - sensor.watertank_oht_sensor_outdoor_temperature
+# =============================================================================
