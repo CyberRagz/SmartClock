@@ -60,6 +60,14 @@ static const IPAddress SUBNET    (255, 255, 255, 0);
 static const IPAddress DNS_1     (192, 168, 0, 1);
 static const IPAddress DNS_2     (8, 8, 8, 8);
 
+// Pin to one specific AP on the mesh instead of letting the radio pick /
+// roam. MQTT was seeing ~60s of dead inbound traffic (state=-4) while
+// outbound kept working - a mesh handoff/backhaul stall is the leading
+// suspect. Set to 0 to go back to normal (any-AP) association.
+#define PIN_BSSID 1
+static uint8_t PINNED_BSSID[6] = { 0xAE, 0x15, 0xA2, 0x45, 0xCC, 0x67 };
+#define PINNED_CHANNEL 6
+
 /* ---------------- TIME ---------------- */
 #define TZ_INFO         "IST-5:30"          // India Standard Time, no DST
 #define NTP_SERVER_1    "pool.ntp.org"
@@ -231,7 +239,11 @@ void startWiFi() {
     Serial.println("WiFi.config() rejected - check the addresses");
   }
 #endif
+#if PIN_BSSID
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD, PINNED_CHANNEL, PINNED_BSSID);
+#else
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+#endif
 }
 
 bool connectWiFi() {
@@ -775,8 +787,11 @@ void loop() {
   // MQTT-down recovery (WiFi is up but the broker socket won't hold):
   //   ~5 failed attempts -> bounce WiFi to flush stuck lwIP/ARP state
   //   5 min still down    -> reboot
-  if (mqttDownSince != 0 && WiFi.status() == WL_CONNECTED) {
-    if (mqttFails >= 5 && !mqttWifiBounced) {
+  // mqttWifiBounced is gated on mqttDownSince (not WiFi.status()) so the
+  // bounce itself - which necessarily shows WiFi briefly disconnected -
+  // doesn't immediately clear the guard and re-trigger itself.
+  if (mqttDownSince != 0) {
+    if (WiFi.status() == WL_CONNECTED && mqttFails >= 5 && !mqttWifiBounced) {
       mqttWifiBounced = true;
       Serial.println("MQTT stuck - bouncing WiFi");
       WiFi.disconnect();
