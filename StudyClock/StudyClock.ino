@@ -1,19 +1,37 @@
 /* =====================================================================
    STUDY CLOCK  -  ESP8266 + 4x MAX7219 (FC-16)  -  MQTT / Home Assistant
    =====================================================================
-   Tailored from SmartClock/SmartClock.ino for the second unit:
-     - 4 LED panels (not 6),  CS on D4
-     - NO DS3231 / no I2C  ->  time comes straight from NTP (configTime)
-     - static IP, single-zone MD_Parola: HH:MM (blinking colon),
-       scrolling messages, periodic date scroll
-     - MQTT auto-discovery under one "Study Clock" HA device
+   Same hardened core as SmartClock/SmartClock.ino (the two are kept in
+   lockstep on purpose) - only panels/pins/identity/DHT differ:
+     - 4 LED panels (not 6), CS on D4
+     - DHT22 fitted on D2 (SmartClock has the same code behind a flag,
+       compiled out - here it's just always on)
+     - static IP 192.168.0.170, study_clock/* MQTT namespace, its own
+       "Study Clock" HA device
+
+   Hardening (ported from the SmartClock freeze/MQTT-drop debugging):
+     - configTime() called ONCE - calling it repeatedly leaks a socket and
+       exhausts the ESP8266's ~5 TCP/UDP PCBs within minutes, which kills
+       the live MQTT connection
+     - MQTT callback only sets flags - it never calls mqtt.publish() or
+       EEPROM.commit() itself (PubSubClient isn't re-entrant; flash writes
+       block); loop() does that work
+     - MQTT reconnect backs off 5s -> 20s -> 60s and stops the socket
+       before every attempt, so TIME_WAIT sockets get a chance to clear
+     - discovery/telemetry publishes are paced with mqtt.loop()+yield()
+       so a small TCP send buffer doesn't overflow
+     - WiFi modem sleep disabled (was dropping inbound TCP after ~SYN-ACK)
+     - recovery watchdogs: OTA-stall timeout, "stuck out of CLOCK state"
+       reboot, and an MQTT-down bounce-WiFi-then-reboot ladder
+     - serial heartbeat every 30s + an explicit "MQTT LOST" log line
 
    Settings persisted to EEPROM: brightness, night brightness, night
    dimming on/off, 12/24h, message repeat count.
 
    Upload from the Arduino IDE (ESP8266 core). Libraries (Library Manager):
-     MD_Parola, MD_MAX72xx, ArduinoJson (v6), PubSubClient
-   Board: "NodeMCU 1.0 (ESP-12E Module)"  (or your ESP8266 board)
+     MD_Parola, MD_MAX72xx, ArduinoJson (v6), PubSubClient,
+     DHT sensor library (Adafruit) + Adafruit Unified Sensor
+   Board: "NodeMCU 1.0 (ESP-12E Module)"
    ===================================================================== */
 
 #include <ESP8266WiFi.h>
@@ -24,7 +42,7 @@
 #include <PubSubClient.h>
 #include <ArduinoOTA.h>
 #include <EEPROM.h>
-#include <DHT.h>            // "DHT sensor library" by Adafruit (+ "Adafruit Unified Sensor")
+#include <DHT.h>
 #include <time.h>
 #include "secrets.h"
 
@@ -69,35 +87,37 @@ static const IPAddress DNS_2     (8, 8, 8, 8);
 #define DEFAULT_NIGHT_BRIGHTNESS 1
 #define DEFAULT_MSG_REPEATS      1
 
+#define GREETING "STUDY CLOCK"           // scrolled once at boot
+
 /* ---------------- IDENTITY / MQTT ---------------- */
 static const char* MQTT_CLIENT_ID = "study_clock";
 #define DISCOVERY_PREFIX "homeassistant"
 
-#define T_AVAIL       "study_clock/status"
-#define T_TIME        "study_clock/time"
-#define T_DATE        "study_clock/date"
-#define T_IP          "study_clock/ip"
-#define T_MAC         "study_clock/mac"
-#define T_RSSI        "study_clock/rssi"
-#define T_HEAP        "study_clock/heap"
-#define T_UPTIME      "study_clock/uptime"
-#define T_RECONNECTS  "study_clock/wifi_reconnects"
-#define T_DISP        "study_clock/display"        // CLOCK / MESSAGE / DATE / BOOT
-#define T_BRIGHT_ST   "study_clock/brightness"
-#define T_NIGHT_BR_ST "study_clock/night_brightness"
+#define T_AVAIL        "study_clock/status"
+#define T_TIME         "study_clock/time"
+#define T_DATE         "study_clock/date"
+#define T_IP           "study_clock/ip"
+#define T_MAC          "study_clock/mac"
+#define T_RSSI         "study_clock/rssi"
+#define T_HEAP         "study_clock/heap"
+#define T_UPTIME       "study_clock/uptime"
+#define T_RECONNECTS   "study_clock/wifi_reconnects"
+#define T_DISP         "study_clock/display"        // CLOCK / MESSAGE / DATE / BOOT
+#define T_BRIGHT_ST    "study_clock/brightness"
+#define T_NIGHT_BR_ST  "study_clock/night_brightness"
 #define T_NIGHT_DIM_ST "study_clock/night_dimming"
-#define T_12H_ST      "study_clock/format_12h"
-#define T_REPEATS_ST  "study_clock/message_repeats"
-#define T_MSG_ST      "study_clock/message"
-#define T_TEMP        "study_clock/temperature"
-#define T_HUM         "study_clock/humidity"
+#define T_12H_ST       "study_clock/format_12h"
+#define T_REPEATS_ST   "study_clock/message_repeats"
+#define T_MSG_ST       "study_clock/message"
+#define T_TEMP         "study_clock/temperature"
+#define T_HUM          "study_clock/humidity"
 
-#define T_CMD_MESSAGE    "study_clock/cmd/message"
-#define T_CMD_BRIGHTNESS "study_clock/cmd/brightness"
-#define T_CMD_NIGHT_BR   "study_clock/cmd/night_brightness"
-#define T_CMD_NIGHT_DIM  "study_clock/cmd/night_dimming"
-#define T_CMD_12H        "study_clock/cmd/format_12h"
-#define T_CMD_REPEATS    "study_clock/cmd/message_repeats"
+#define T_CMD_MESSAGE      "study_clock/cmd/message"
+#define T_CMD_BRIGHTNESS   "study_clock/cmd/brightness"
+#define T_CMD_NIGHT_BR     "study_clock/cmd/night_brightness"
+#define T_CMD_NIGHT_DIM    "study_clock/cmd/night_dimming"
+#define T_CMD_12H          "study_clock/cmd/format_12h"
+#define T_CMD_REPEATS      "study_clock/cmd/message_repeats"
 #define T_CMD_RESET        "study_clock/cmd/reset"       // -> back to clock
 #define T_CMD_SHOW_DATE    "study_clock/cmd/show_date"
 #define T_CMD_SHOW_CLIMATE "study_clock/cmd/show_climate"
@@ -106,9 +126,6 @@ static const char* MQTT_CLIENT_ID = "study_clock";
 /* ---------------- INTERVALS ---------------- */
 #define WIFI_TIMEOUT            20000UL
 #define WIFI_RECONNECT_INTERVAL 30000UL
-#define MQTT_RETRY_INTERVAL     5000UL
-#define NTP_RESYNC_INTERVAL     3600000UL   // 1 h once we have time
-#define NTP_RETRY_INTERVAL      30000UL     // while we don't
 #define TELEMETRY_FAST_INTERVAL 10000UL     // time / date / display state
 #define TELEMETRY_SLOW_INTERVAL 60000UL     // rssi / ip / diagnostics
 #define BRIGHTNESS_CHECK_INTERVAL 5000UL
@@ -139,11 +156,18 @@ int      msgRepeats           = DEFAULT_MSG_REPEATS;
 
 bool     colonOn              = false;
 volatile bool otaActive       = false;
+volatile unsigned long otaHeartbeat = 0;   // last OTA activity; stall -> reboot
+unsigned long lastClockRun    = 0;         // last time we reached SHOW_CLOCK_RUN
 bool     pendingMessage       = false;
 bool     pendingDate          = false;
 bool     pendingClimate       = false;
 bool     pendingRestart       = false;
+bool     pendingStates        = false;   // publish state topics from loop()
+bool     prefsDirty           = false;   // savePrefs() from loop()
 unsigned long wifiReconnects  = 0;
+uint8_t  mqttFails            = 0;        // consecutive MQTT connect failures
+unsigned long mqttDownSince   = 0;        // millis() when MQTT first went down (0 = up)
+bool     mqttWifiBounced      = false;    // did we bounce WiFi this outage yet
 
 // DHT22
 float    dhtTemp              = NAN;
@@ -153,7 +177,6 @@ unsigned long lastDhtRead     = 0 - DHT_READ_INTERVAL;   // read on first loop
 unsigned long lastDhtOk       = 0;
 
 unsigned long lastBlink       = 0;
-unsigned long lastNtpAttempt  = 0 - NTP_RESYNC_INTERVAL;
 unsigned long lastDateScroll  = 0;
 char     clockShown[8]        = "";
 
@@ -209,6 +232,9 @@ void savePrefs() {
    ===================================================================== */
 void startWiFi() {
   WiFi.mode(WIFI_STA);
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);   // modem sleep can drop inbound TCP
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
   WiFi.hostname("studyclock");
 #if USE_STATIC_IP
   if (!WiFi.config(STATIC_IP, GATEWAY, SUBNET, DNS_1, DNS_2)) {
@@ -228,8 +254,9 @@ bool connectWiFi() {
     Serial.print('.');
   }
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("\nWiFi OK  ip=%s  mac=%s\n",
-                  WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str());
+    Serial.printf("\nWiFi OK  ip=%s  mac=%s  bssid=%s  ch=%d  rssi=%d\n",
+                  WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str(),
+                  WiFi.BSSIDstr().c_str(), WiFi.channel(), WiFi.RSSI());
     return true;
   }
   Serial.println("\nWiFi FAILED");
@@ -256,9 +283,16 @@ bool haveValidTime() {
   return time(nullptr) > (time_t)MIN_VALID_EPOCH;
 }
 
+// configTime() must be called ONCE - it starts the SNTP client which then
+// retries on its own (~1 s until it syncs, then hourly). Calling it repeatedly
+// leaks a UDP socket each time; on the ESP8266's ~5 PCBs that exhausts the TCP
+// stack within minutes and kills the MQTT connection ("closed by client").
+bool ntpStarted = false;
 void tryNtpSync() {
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (ntpStarted || WiFi.status() != WL_CONNECTED) return;
   configTime(TZ_INFO, NTP_SERVER_1, NTP_SERVER_2, NTP_SERVER_3);
+  ntpStarted = true;
+  Serial.println("SNTP started");
 }
 
 void getClockText(char* buf, size_t len) {
@@ -365,6 +399,9 @@ void showStatic(const char* text) {
 /* =====================================================================
    MQTT
    ===================================================================== */
+// The callback runs INSIDE mqtt.loop(). PubSubClient is not re-entrant and
+// EEPROM.commit() blocks the flash - so this only mutates globals and raises
+// flags; loop() does the publishing / saving / display work.
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   if (length > 100) length = 100;
   char msg[101];
@@ -373,46 +410,43 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
   if (!strcmp(topic, T_CMD_MESSAGE)) {
     customMessage = msg;
-    mqtt.publish(T_MSG_ST, msg, true);
     if (customMessage.length() > 0) pendingMessage = true;
     else                            state = SHOW_CLOCK_ENTRY;
+    pendingStates = true;
   }
   else if (!strcmp(topic, T_CMD_BRIGHTNESS)) {
     char* end; long v = strtol(msg, &end, 10);
     if (end != msg) {
       int nv = constrain((int)v, 0, 15);
-      if (nv != brightness) { brightness = nv; savePrefs(); }
-      applyBrightness(true);
-      publishStates();
+      if (nv != brightness) { brightness = nv; prefsDirty = true; }
+      pendingStates = true;
     }
   }
   else if (!strcmp(topic, T_CMD_NIGHT_BR)) {
     char* end; long v = strtol(msg, &end, 10);
     if (end != msg) {
       int nv = constrain((int)v, 0, 15);
-      if (nv != nightBrightness) { nightBrightness = nv; savePrefs(); }
-      applyBrightness(true);
-      publishStates();
+      if (nv != nightBrightness) { nightBrightness = nv; prefsDirty = true; }
+      pendingStates = true;
     }
   }
   else if (!strcmp(topic, T_CMD_NIGHT_DIM)) {
     bool nv = !strcmp(msg, "ON");
-    if (nv != nightDimming) { nightDimming = nv; savePrefs(); }
-    applyBrightness(true);
-    publishStates();
+    if (nv != nightDimming) { nightDimming = nv; prefsDirty = true; }
+    pendingStates = true;
   }
   else if (!strcmp(topic, T_CMD_12H)) {
     bool nv = !strcmp(msg, "ON");
-    if (nv != use12h) { use12h = nv; savePrefs(); }
+    if (nv != use12h) { use12h = nv; prefsDirty = true; }
     clockShown[0] = '\0';
-    publishStates();
+    pendingStates = true;
   }
   else if (!strcmp(topic, T_CMD_REPEATS)) {
     char* end; long v = strtol(msg, &end, 10);
     if (end != msg) {
       int nv = constrain((int)v, 1, 5);
-      if (nv != msgRepeats) { msgRepeats = nv; savePrefs(); }
-      publishStates();
+      if (nv != msgRepeats) { msgRepeats = nv; prefsDirty = true; }
+      pendingStates = true;
     }
   }
   else if (!strcmp(topic, T_CMD_RESET)) {
@@ -430,17 +464,28 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void mqttReconnect() {
-  if (mqtt.connected()) return;
+  if (mqtt.connected()) { mqttFails = 0; mqttDownSince = 0; return; }
+
+  if (mqttDownSince == 0) mqttDownSince = millis();
+
   static unsigned long last = 0;
-  if (millis() - last < MQTT_RETRY_INTERVAL) return;
+  // back off as failures pile up so lwIP TIME_WAIT sockets can clear
+  unsigned long interval = mqttFails < 3 ? 5000UL
+                         : mqttFails < 8 ? 20000UL : 60000UL;
+  if (millis() - last < interval) return;
   last = millis();
+
+  espClient.stop();   // clear any half-open socket before we try again
 
   Serial.print("MQTT... ");
   if (mqtt.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASS,
                    T_AVAIL, 0, true, "offline")) {
     Serial.println("connected");
+    mqttFails = 0;
+    mqttDownSince = 0;
     mqtt.publish(T_AVAIL, "online", true);
     publishDiscovery();
+    mqtt.loop(); yield();          // let lwIP drain the discovery burst
 
     mqtt.subscribe(T_CMD_MESSAGE);
     mqtt.subscribe(T_CMD_BRIGHTNESS);
@@ -454,10 +499,15 @@ void mqttReconnect() {
     mqtt.subscribe(T_CMD_RESTART);
 
     mqtt.publish(T_MAC, WiFi.macAddress().c_str(), true);
+    mqtt.loop(); yield();
     publishStates();
+    mqtt.loop(); yield();
     publishTelemetry(true);
   } else {
-    Serial.printf("failed rc=%d\n", mqtt.state());
+    mqttFails++;
+    Serial.printf("failed rc=%d (rssi=%d, fails=%u)\n",
+                  mqtt.state(), WiFi.RSSI(), mqttFails);
+    espClient.stop();
   }
 }
 
@@ -487,6 +537,8 @@ void discovery(const char* component, const char* objectId, const char* name, F 
   char payload[640];
   size_t n = serializeJson(doc, payload, sizeof(payload));
   mqtt.publish(topic, (const uint8_t*)payload, n, true);
+  mqtt.loop();          // pump the socket between payloads so the TCP send
+  yield();              // buffer doesn't overflow on a small-buffer lwIP build
 }
 
 void publishDiscovery() {
@@ -643,9 +695,10 @@ void setupOTA() {
   ArduinoOTA.setHostname("studyclock");
   ArduinoOTA.setPassword(OTA_PASSWORD);
 
-  ArduinoOTA.onStart([]() { otaActive = true; showStatic("ota"); });
+  ArduinoOTA.onStart([]() { otaActive = true; otaHeartbeat = millis(); showStatic("ota"); });
 
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    otaHeartbeat = millis();
     if (total == 0) return;
     MD_MAX72XX* mx = display.getGraphicObject();
     int filled = (int)((uint32_t)progress * PANEL_COLS / total);
@@ -680,13 +733,14 @@ void setup() {
 
   mqtt.setServer(MQTT_SERVER, MQTT_PORT);
   mqtt.setCallback(mqttCallback);
-  mqtt.setSocketTimeout(2);
+  mqtt.setSocketTimeout(5);           // 2 s is too tight on a marginal link -> rc=-2
+  mqtt.setKeepAlive(30);
   mqtt.setBufferSize(768);            // HA discovery payloads exceed the 256 default
 
   tryNtpSync();
   applyBrightness(true);
 
-  startScroll("STUDY CLOCK", 1200);
+  startScroll(GREETING, 1200);
   state = SHOW_BOOT;
   Serial.printf("Setup done  mac=%s\n", WiFi.macAddress().c_str());
 }
@@ -696,13 +750,67 @@ void setup() {
    ===================================================================== */
 void loop() {
   ArduinoOTA.handle();
-  if (otaActive) return;
+  if (otaActive) {
+    // A stalled OTA (started, then the TCP link dropped without onEnd/onError)
+    // would otherwise wedge the device forever while still answering pings.
+    if (millis() - otaHeartbeat > 90000UL) ESP.restart();
+    return;
+  }
+
+  // Software watchdog: if we booted, connected, but haven't shown the running
+  // clock for 15 min, something upstream is stuck - reboot.
+  if (state == SHOW_CLOCK_RUN) lastClockRun = millis();
+  if (lastClockRun != 0 && millis() - lastClockRun > 900000UL) ESP.restart();
 
   ensureWiFi();
   mqttReconnect();
   mqtt.loop();
   readDht();
   publishTelemetry(false);
+
+  // MQTT-down recovery (WiFi is up but the broker socket won't hold):
+  //   ~5 failed attempts -> bounce WiFi to flush stuck lwIP/ARP state
+  //   5 min still down    -> reboot
+  // mqttWifiBounced is gated on mqttDownSince (not WiFi.status()) so the
+  // bounce itself - which necessarily shows WiFi briefly disconnected -
+  // doesn't immediately clear the guard and re-trigger itself.
+  if (mqttDownSince != 0) {
+    if (WiFi.status() == WL_CONNECTED && mqttFails >= 5 && !mqttWifiBounced) {
+      mqttWifiBounced = true;
+      Serial.println("MQTT stuck - bouncing WiFi");
+      WiFi.disconnect();
+      delay(200);
+      startWiFi();
+      ntpStarted = false;   // re-start SNTP once WiFi is back
+    }
+    if (millis() - mqttDownSince > 300000UL) ESP.restart();
+  } else {
+    mqttWifiBounced = false;
+  }
+
+  // deferred work raised by the MQTT callback
+  if (prefsDirty)    { prefsDirty = false; savePrefs(); }
+  if (pendingStates) { pendingStates = false; applyBrightness(true); publishStates(); }
+
+  // log the exact moment MQTT drops
+  static bool wasMqtt = false;
+  bool nowMqtt = mqtt.connected();
+  if (wasMqtt && !nowMqtt)
+    Serial.printf(">>> MQTT LOST at %lus  state=%d heap=%u wifi=%d rssi=%d\n",
+                  millis() / 1000, mqtt.state(), ESP.getFreeHeap(),
+                  WiFi.status() == WL_CONNECTED, WiFi.RSSI());
+  wasMqtt = nowMqtt;
+
+  // serial heartbeat - a healthy clock prints this every 30 s; if it stops,
+  // the last line shows where it wedged
+  static unsigned long lastBeat = 0;
+  if (millis() - lastBeat >= 30000UL) {
+    lastBeat = millis();
+    Serial.printf("[%lus] heap=%u state=%s wifi=%d rssi=%d mqtt=%d ntp=%d\n",
+                  millis() / 1000, ESP.getFreeHeap(), displayName(),
+                  WiFi.status() == WL_CONNECTED, WiFi.RSSI(), nowMqtt,
+                  haveValidTime());
+  }
 
   if (pendingRestart) {
     mqtt.publish(T_AVAIL, "offline", true);
@@ -718,12 +826,7 @@ void loop() {
     applyBrightness(false);
   }
 
-  // NTP: retry fast until valid, then hourly
-  unsigned long ntpInterval = haveValidTime() ? NTP_RESYNC_INTERVAL : NTP_RETRY_INTERVAL;
-  if (millis() - lastNtpAttempt >= ntpInterval) {
-    lastNtpAttempt = millis();
-    tryNtpSync();
-  }
+  tryNtpSync();   // no-op after the first successful call (SNTP self-retries)
 
   // Command-driven transitions (kept out of the callback so display calls
   // don't run re-entrantly inside mqtt.loop())
